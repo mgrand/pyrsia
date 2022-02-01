@@ -37,12 +37,14 @@ pub struct MessageDelivery<I: Eq + Hash, M: Clone> {
 }
 
 impl<I: Eq + Hash + Clone, M: Clone> MessageDelivery<I, M> {
+    /// Create a MessageDelivery struct
     pub fn default() -> MessageDelivery<I, M> {
         MessageDelivery {
             id_message_map: DashMap::with_capacity(INITIAL_MAP_CAPACITY),
         }
     }
 
+    /// Make a message available for delivery to the thread waiting for a message associated with the given id
     pub fn deliver(&self, id: I, message: M) {
         let delivery_envelope = MessageEnvelope {
             arc: None,
@@ -52,6 +54,7 @@ impl<I: Eq + Hash + Clone, M: Clone> MessageDelivery<I, M> {
             receiving_envelope.notify_all();
         }
     }
+
 
     pub fn receive(&self, id: I) -> Result<M> {
         let arc = Arc::new((Mutex::new(false), Condvar::new()));
