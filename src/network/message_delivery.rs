@@ -32,6 +32,7 @@ const INITIAL_MAP_CAPACITY: usize = 23;
 /// Type Parameters:
 /// * I — The type of value used to match messages to recipients
 /// * M — The type of the messages
+#[derive(Debug)]
 pub struct MessageDelivery<I: Eq + Hash, M: Clone> {
     id_message_map: DashMap<I, MessageEnvelope<M>>,
 }
@@ -134,7 +135,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn placeholder_test() {
+    fn deliver_then_receive() {
         assert!(true)
     }
 }
