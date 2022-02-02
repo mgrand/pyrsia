@@ -32,6 +32,8 @@ use std::io::{BufReader, Read};
 use std::panic::UnwindSafe;
 use std::str;
 use std::{fs, panic};
+use libp2p::floodsub::Topic;
+use libp2p::gossipsub::IdentTopic;
 use libp2p_kad::{QueryId, QueryResult};
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
@@ -42,6 +44,9 @@ lazy_static! {
     pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> = MessageDelivery::default();
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
+    pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_converstation");
+    pub static ref GOSSIP_TOPIC: IdentTopic = IdentTopic::new("pyrsia_file_share_topic");
+
     pub static ref MEMORY_STORE: MemoryStore = MemoryStore::new(*LOCAL_PEER_ID);
     pub static ref KADEMLIA_PROXY: KademliaThreadSafeProxy = KademliaThreadSafeProxy::default();
     pub static ref ART_MGR: ArtifactManager = {

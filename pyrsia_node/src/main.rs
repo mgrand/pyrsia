@@ -107,14 +107,9 @@ async fn main() {
     let transport: TcpTokioTransport = new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
 
     let (respond_tx, respond_rx) = mpsc::channel(32);
-    let floodsub_topic: Topic = floodsub::Topic::new("pyrsia_node_converstation");
-    let gossip_topic: libp2p::gossipsub::IdentTopic =
-        libp2p::gossipsub::IdentTopic::new("pyrsia_file_share_topic");
 
     // Create a Swarm to manage peers and events.
     let mut swarm: MyBehaviourSwarm = swarm::new(
-        gossip_topic.clone(),
-        floodsub_topic.clone(),
         transport,
         respond_tx,
     )

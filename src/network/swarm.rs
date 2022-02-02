@@ -19,7 +19,7 @@ use super::transport::TcpTokioTransport;
 use libp2p::gossipsub::MessageId;
 use libp2p::gossipsub::{GossipsubMessage, IdentTopic, MessageAuthenticity, ValidationMode};
 use libp2p::{
-    floodsub::{Floodsub, Topic},
+    floodsub::Floodsub,
     mdns::Mdns,
     swarm::SwarmBuilder,
     Swarm,
@@ -27,7 +27,7 @@ use libp2p::{
 use libp2p::gossipsub;
 use std::collections::hash_map::DefaultHasher;
 
-use crate::node_manager::handlers::LOCAL_PEER_ID;
+use crate::node_manager::handlers::{FLOODSUB_TOPIC,LOCAL_PEER_ID};
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 use crate::node_api::LOCAL_KEY;
@@ -35,8 +35,6 @@ use crate::node_api::LOCAL_KEY;
 pub type MyBehaviourSwarm<'a> = Swarm<MyBehaviour>;
 
 pub async fn new(
-    gossip_topic: IdentTopic,
-    topic: Topic,
     transport: TcpTokioTransport,
     response_sender: tokio::sync::mpsc::Sender<String>,
 ) -> Result<MyBehaviourSwarm<'static>, ()> {
@@ -70,7 +68,7 @@ pub async fn new(
         mdns,
         response_sender,
     );
-    behaviour.floodsub_mut().subscribe(topic.clone());
+    behaviour.floodsub_mut().subscribe(FLOODSUB_TOPIC.clone());
 
     let swarm = SwarmBuilder::new(transport, behaviour, *LOCAL_PEER_ID)
         // We want the connection background tasks to be spawned
