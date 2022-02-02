@@ -19,9 +19,9 @@ extern crate core;
 extern crate dashmap;
 extern crate std;
 
-use std::fmt::Debug;
 use anyhow::{bail, Result};
 use dashmap::DashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Condvar, LockResult, Mutex, MutexGuard};
 
@@ -94,13 +94,11 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
         }
     }
 
-    fn wait_for_delivery(
-        arc: Arc<(Mutex<bool>, Condvar)>,
-    ) -> Result<()> {
+    fn wait_for_delivery(arc: Arc<(Mutex<bool>, Condvar)>) -> Result<()> {
         fn to_anyhow(r: LockResult<MutexGuard<'_, bool>>) -> Result<MutexGuard<'_, bool>> {
             match r {
                 Ok(guard) => Ok(guard),
-                Err(error) => bail!("Error unlocking mutex for receive: {}", error)
+                Err(error) => bail!("Error unlocking mutex for receive: {}", error),
             }
         }
         let (mutex, cvar) = &*arc;
@@ -135,9 +133,47 @@ impl<M: Debug> MessageEnvelope<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{thread, time};
+    use log::info;
+
+    #[derive(Debug)]
+    enum FakeTestEvent {
+        Start,
+        Stop,
+    }
 
     #[test]
-    fn deliver_then_receive() {
-        assert!(true)
+    fn deliver_then_receive() -> Result<()> {
+        let message_delivery: MessageDelivery<u32, FakeTestEvent> = MessageDelivery::default();
+        let id = 37;
+        message_delivery.deliver(id, FakeTestEvent::Start);
+        let actual_message = message_delivery.receive(id)?;
+        match actual_message {
+            FakeTestEvent::Start => Ok(()),
+            _ => bail!("Expected FakeTestEvent::Start but got {:?}", actual_message),
+        }
+    }
+
+    const RECEIVE_BEFORE_DELIVER_ID: i32 = 41;
+
+    #[test]
+    fn receive_before_deliver() -> Result<()> {
+        let arc: Arc<MessageDelivery<i32, FakeTestEvent>> = Arc::new(MessageDelivery::default());
+        let arc2 = arc.clone();
+        thread::spawn(move || {
+            info!("receive_before_deliver: Waiting for receipt attempt to begin. Delvery will be after");
+            let message_delivery = &*arc2;
+            while message_delivery.id_message_map.get(&RECEIVE_BEFORE_DELIVER_ID).is_none() {
+                thread::sleep(time::Duration::from_millis(1));
+            }
+            info!("receive_before_deliver: delivering");
+            message_delivery.deliver(RECEIVE_BEFORE_DELIVER_ID, FakeTestEvent::Stop);
+        });
+        let message_delivery = &*arc;
+        let actual_message = message_delivery.receive(RECEIVE_BEFORE_DELIVER_ID)?;
+        match actual_message {
+            FakeTestEvent::Stop => Ok(()),
+            _ => bail!("Expected FakeTestEvent::Stop but got {:?}", actual_message),
+        }
     }
 }
