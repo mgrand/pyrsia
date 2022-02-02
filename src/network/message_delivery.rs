@@ -46,7 +46,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
         }
     }
 
-    /// Make a message available for delivery to the thread waiting for a message associated with the given id
+    /// Make a message available for delivery to the thread that is or will be waiting for a message associated with the given id
     pub fn deliver(&self, id: I, message: M) {
         let delivery_envelope = MessageEnvelope {
             arc: None,
@@ -57,7 +57,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
         }
     }
 
-
+    /// Receive a message associated with the given IT that is already available or wait for it.
     pub fn receive(&self, id: I) -> Result<M> {
         let arc = Arc::new((Mutex::new(false), Condvar::new()));
         let receiving_envelope = MessageEnvelope {
