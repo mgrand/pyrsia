@@ -19,6 +19,7 @@ extern crate core;
 extern crate dashmap;
 extern crate std;
 
+use std::fmt::Debug;
 use anyhow::{bail, Result};
 use dashmap::DashMap;
 use std::hash::Hash;
@@ -33,11 +34,11 @@ const INITIAL_MAP_CAPACITY: usize = 23;
 /// * I — The type of value used to match messages to recipients
 /// * M — The type of the messages
 #[derive(Debug)]
-pub struct MessageDelivery<I: Eq + Hash, M: Clone> {
+pub struct MessageDelivery<I: Eq + Hash, M: Debug> {
     id_message_map: DashMap<I, MessageEnvelope<M>>,
 }
 
-impl<I: Eq + Hash + Clone, M: Clone> MessageDelivery<I, M> {
+impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
     /// Create a MessageDelivery struct
     pub fn default() -> MessageDelivery<I, M> {
         MessageDelivery {
@@ -111,12 +112,13 @@ impl<I: Eq + Hash + Clone, M: Clone> MessageDelivery<I, M> {
     }
 }
 
-struct MessageEnvelope<M: Clone> {
+#[derive(Debug)]
+struct MessageEnvelope<M: Debug> {
     arc: Option<Arc<(Mutex<bool>, Condvar)>>,
     message: Option<M>,
 }
 
-impl<M: Clone> MessageEnvelope<M> {
+impl<M: Debug> MessageEnvelope<M> {
     pub fn notify_all(&self) {
         match self.arc {
             Some(ref arc_value) => {

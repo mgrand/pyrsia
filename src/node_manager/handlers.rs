@@ -21,6 +21,7 @@ use super::Hash;
 
 use crate::metadata_manager::metadata::Metadata;
 use crate::network::kademlia_thread_safe_proxy::KademliaThreadSafeProxy;
+use crate::network::message_delivery::MessageDelivery;
 use anyhow::{Context, Result};
 use byte_unit::Byte;
 use lazy_static::lazy_static;
@@ -31,12 +32,14 @@ use std::io::{BufReader, Read};
 use std::panic::UnwindSafe;
 use std::str;
 use std::{fs, panic};
+use libp2p_kad::{KademliaEvent, QueryId};
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
 //TODO: read from CLI config file
 pub const ALLOCATED_SPACE_FOR_ARTIFACTS: &str = "10.84 GB";
 
 lazy_static! {
+    pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, KademliaEvent> = MessageDelivery::default();
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
     pub static ref MEMORY_STORE: MemoryStore = MemoryStore::new(*LOCAL_PEER_ID);
