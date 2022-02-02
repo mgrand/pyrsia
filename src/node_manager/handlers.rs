@@ -171,7 +171,7 @@ mod tests {
         put_artifact(&GOOD_ART_HASH, Box::new(get_file_reader()?))
             .context("Error from put_artifact")?;
 
-        // pull artiafct
+        // pull artifact
         let file = get_artifact(&GOOD_ART_HASH, HashAlgorithm::SHA256)
             .context("Error from get_artifact")?;
 
@@ -261,5 +261,10 @@ mod tests {
 
         assert_eq!(push_result, true);
         Ok(())
+    }
+
+    #[test]
+    pub fn message_delivery_is_initialized() {
+        info!("Message_delivery: {:?}", *MESSAGE_DELIVERY)
     }
 }
