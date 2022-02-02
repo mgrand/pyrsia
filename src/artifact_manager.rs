@@ -759,6 +759,7 @@ mod tests {
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use libp2p_kad::record::Key;
     use stringreader::StringReader;
 
     pub use super::*;
@@ -893,7 +894,12 @@ mod tests {
     }
 
     fn find_torrent_in_dht(am: &ArtifactManager, path: &Path) -> Result<()> {
-        let _multihash = am.path_to_hash(path)?.to_multihash()?;
+        let multihash: Multihash = am.path_to_hash(path)?.to_multihash()?;
+        let file_torrent = read_torrent_from_file(path);
+
+        // get torrent from DHT
+        let query_id = KADEMLIA_PROXY.get_record(&Key::new(&multihash.to_bytes()), Quorum::One);
+
         //TODO The test to see if the torrent is in the DHT involves code that will be in the next PR.
         Ok(())
     }

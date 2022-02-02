@@ -23,7 +23,8 @@ use anyhow::{bail, Result};
 use dashmap::DashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Condvar, LockResult, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, LockResult, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 const INITIAL_MAP_CAPACITY: usize = 23;
 
@@ -58,7 +59,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
     }
 
     /// Receive a message associated with the given IT that is already available or wait for it.
-    pub fn receive(&self, id: I) -> Result<M> {
+    pub fn receive(&self, id: I, timeout_duration: Duration) -> Result<M> {
         let arc = Arc::new((Mutex::new(false), Condvar::new()));
         let receiving_envelope = MessageEnvelope {
             arc: Some(arc.clone()),
@@ -75,9 +76,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
                 bail!("Received message envelope with no message")
             }
             None => {
-                if let Err(error) = Self::wait_for_delivery(arc) {
-                    bail!("Error locking mutex for receive: {}", error)
-                }
+                Self::wait_for_delivery(arc, timeout_duration)?;
                 match self.id_message_map.remove(&id) {
                     Some((
                         _,
@@ -94,17 +93,26 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
         }
     }
 
-    fn wait_for_delivery(arc: Arc<(Mutex<bool>, Condvar)>) -> Result<()> {
-        fn to_anyhow(r: LockResult<MutexGuard<'_, bool>>) -> Result<MutexGuard<'_, bool>> {
-            match r {
-                Ok(guard) => Ok(guard),
-                Err(error) => bail!("Error unlocking mutex for receive: {}", error),
-            }
-        }
+    fn wait_for_delivery(
+        arc: Arc<(Mutex<bool>, Condvar)>,
+        timeout_duration: Duration,
+    ) -> Result<()> {
         let (mutex, cvar) = &*arc;
-        let mut guard = to_anyhow(mutex.lock())?;
+        let mut guard = match mutex.lock() {
+            Ok(guard) => guard,
+            Err(error) => return bail!("Error unlocking mutex for receive: {}", error),
+        };
         while !*guard {
-            guard = to_anyhow(cvar.wait(guard))?;
+            guard = match cvar.wait_timeout(guard, timeout_duration) {
+                Ok((guard, wait_timeout_result)) => {
+                    if wait_timeout_result.timed_out() {
+                        return bail!("MessageDelivery::receive timed out");
+                    } else {
+                        guard
+                    }
+                }
+                Err(error) => return bail!("Error unlocking mutex for receive: {}", error),
+            }
         }
         Ok(())
     }
@@ -133,8 +141,8 @@ impl<M: Debug> MessageEnvelope<M> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{thread, time};
     use log::info;
+    use std::{thread, time};
 
     #[derive(Debug)]
     enum FakeTestEvent {
@@ -147,7 +155,7 @@ mod tests {
         let message_delivery: MessageDelivery<u32, FakeTestEvent> = MessageDelivery::default();
         let id = 37;
         message_delivery.deliver(id, FakeTestEvent::Start);
-        let actual_message = message_delivery.receive(id)?;
+        let actual_message = message_delivery.receive(id, Duration::from_millis(2))?;
         match actual_message {
             FakeTestEvent::Start => Ok(()),
             _ => bail!("Expected FakeTestEvent::Start but got {:?}", actual_message),
@@ -163,14 +171,18 @@ mod tests {
         thread::spawn(move || {
             info!("receive_before_deliver: Waiting for receipt attempt to begin. Delvery will be after");
             let message_delivery = &*arc2;
-            while message_delivery.id_message_map.get(&RECEIVE_BEFORE_DELIVER_ID).is_none() {
+            while message_delivery
+                .id_message_map
+                .get(&RECEIVE_BEFORE_DELIVER_ID)
+                .is_none()
+            {
                 thread::sleep(time::Duration::from_millis(1));
             }
             info!("receive_before_deliver: delivering");
             message_delivery.deliver(RECEIVE_BEFORE_DELIVER_ID, FakeTestEvent::Stop);
         });
         let message_delivery = &*arc;
-        let actual_message = message_delivery.receive(RECEIVE_BEFORE_DELIVER_ID)?;
+        let actual_message = message_delivery.receive(RECEIVE_BEFORE_DELIVER_ID, Duration::from_millis(2))?;
         match actual_message {
             FakeTestEvent::Stop => Ok(()),
             _ => bail!("Expected FakeTestEvent::Stop but got {:?}", actual_message),

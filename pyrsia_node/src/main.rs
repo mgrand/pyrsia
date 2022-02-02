@@ -33,6 +33,7 @@ use pyrsia::logging::*;
 use pyrsia::network::swarm::{self, MyBehaviourSwarm};
 use pyrsia::network::transport::{new_tokio_tcp_transport, TcpTokioTransport};
 use pyrsia::node_api::routes::make_node_routes;
+use pyrsia::node_api::{LOCAL_KEY, LOCAL_PEER_ID};
 
 use clap::{App, Arg, ArgMatches};
 use futures::StreamExt;
@@ -103,9 +104,7 @@ async fn main() {
         )
         .get_matches();
 
-    let local_key: identity::Keypair = identity::Keypair::generate_ed25519();
-    let local_peer_id = PeerId::from(local_key.public());
-    let transport: TcpTokioTransport = new_tokio_tcp_transport(&local_key); // Create a tokio-based TCP transport using noise for authenticated
+    let transport: TcpTokioTransport = new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
 
     let (respond_tx, respond_rx) = mpsc::channel(32);
     let floodsub_topic: Topic = floodsub::Topic::new("pyrsia_node_converstation");
@@ -117,7 +116,6 @@ async fn main() {
         gossip_topic.clone(),
         floodsub_topic.clone(),
         transport,
-        local_key,
         respond_tx,
     )
     .await
@@ -264,7 +262,7 @@ async fn main() {
                 },
                 EventType::Message(message) => match message.as_str() {
                     cmd if cmd.starts_with("peers") || cmd.starts_with("status") => {
-                        swarm.behaviour_mut().list_peers(local_peer_id).await
+                        swarm.behaviour_mut().list_peers(*LOCAL_PEER_ID).await
                     }
                     cmd if cmd.starts_with("get_blobs") => {
                         swarm.behaviour_mut().lookup_blob(message).await

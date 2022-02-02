@@ -30,6 +30,7 @@ use std::collections::hash_map::DefaultHasher;
 use crate::node_manager::handlers::LOCAL_PEER_ID;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+use crate::node_api::LOCAL_KEY;
 
 pub type MyBehaviourSwarm<'a> = Swarm<MyBehaviour>;
 
@@ -37,7 +38,6 @@ pub async fn new(
     gossip_topic: IdentTopic,
     topic: Topic,
     transport: TcpTokioTransport,
-    local_key: identity::Keypair,
     response_sender: tokio::sync::mpsc::Sender<String>,
 ) -> Result<MyBehaviourSwarm<'static>, ()> {
     // To content-address message, we can take the hash of message and use it as an ID.
@@ -57,7 +57,7 @@ pub async fn new(
         .expect("Valid config");
     // build a gossipsub network behaviour
     let mut gossipsub: gossipsub::Gossipsub =
-        gossipsub::Gossipsub::new(MessageAuthenticity::Signed(local_key), gossipsub_config)
+        gossipsub::Gossipsub::new(MessageAuthenticity::Signed(LOCAL_KEY.clone()), gossipsub_config)
             .expect("Correct configuration");
 
     // subscribes to our gossip topic
@@ -66,7 +66,7 @@ pub async fn new(
     let mdns = Mdns::new(Default::default()).await.unwrap();
     let mut behaviour = MyBehaviour::new(
         gossipsub,
-        Floodsub::new(*LOCAL_PEER_ID),
+        Floodsub::new(LOCAL_PEER_ID.clone()),
         mdns,
         response_sender,
     );

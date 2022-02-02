@@ -30,8 +30,9 @@ use libp2p::{
     swarm::NetworkBehaviourEventProcess,
     NetworkBehaviour, PeerId,
 };
-use log::{debug, error, info};
+use log::{debug, error, info, warn};
 use std::collections::HashSet;
+use crate::node_api::MESSAGE_DELIVERY;
 
 // We create a custom network behaviour that combines floodsub and mDNS.
 // The derive generates a delegating `NetworkBehaviour` impl which in turn
@@ -83,7 +84,7 @@ impl MyBehaviour {
 
     pub async fn list_peers_cmd(&mut self) {
         match get_peers(&mut self.mdns) {
-            Ok(val) => println!("Peers are : {}", val),
+            Ok(val) => info!("Peers are : {}", val),
             Err(e) => error!("failed to get peers connected: {:?}", e),
         }
     }
@@ -91,6 +92,73 @@ impl MyBehaviour {
     pub fn advertise_blob(&mut self, hash: String, value: Vec<u8>) -> Result<QueryId, Error> {
         let num = std::num::NonZeroUsize::new(2).ok_or(Error::ValueTooLarge)?;
         KADEMLIA_PROXY.put_record(Record::new(Key::new(&hash), value), Quorum::N(num))
+    }
+
+    fn log_kademlia_event(&mut self, message: &KademliaEvent) {
+        if let KademliaEvent::OutboundQueryCompleted {
+            result,
+            id: query_id,
+            ..
+        } = message
+        {
+            debug!("Received query result for Kademlia query id {:?}", query_id);
+            match result {
+                QueryResult::GetProviders(Ok(ok)) => {
+                    for peer in ok.providers.clone() {
+                        debug!(target: "pyrsia_node_comms",
+                        "Peer {:?} provides key {:?}",
+                        peer,
+                        std::str::from_utf8(ok.key.as_ref()).unwrap()
+                        );
+                    }
+                }
+                QueryResult::GetClosestPeers(Ok(ref ok)) => {
+                    info!("GetClosestPeers result {:?}", ok.peers);
+                    let connected_peers = itertools::join(ok.peers.clone(), ",");
+                    respond_send(self.response_sender.clone(), connected_peers);
+                }
+                QueryResult::GetProviders(Err(err)) => {
+                    error!(target: "pyrsia_node_comms", "Failed to get providers: {:?}", err);
+                }
+                QueryResult::GetRecord(Ok(ok)) => {
+                    for PeerRecord {
+                        record: Record { key, value, .. },
+                        ..
+                    } in ok.records.clone()
+                    {
+                        debug!(target: "pyrsia_node_comms",
+                            "Got record {:?} {:?}",
+                            std::str::from_utf8(key.as_ref()).unwrap(),
+                            std::str::from_utf8(&value).unwrap(),
+                        );
+                    }
+                }
+                QueryResult::GetRecord(Err(err)) => {
+                    error!(target: "pyrsia_node_comms","Failed to get record: {:?}", err);
+                }
+                QueryResult::PutRecord(Ok(PutRecordOk { key })) => {
+                    info!(target: "pyrsia_node_comms",
+                        "Successfully put record {:?}",
+                        std::str::from_utf8(key.as_ref()).unwrap()
+                    );
+                }
+                QueryResult::PutRecord(Err(err)) => {
+                    error!(target: "pyrsia_node_comms","Failed to put record: {:?}", err);
+                }
+                QueryResult::StartProviding(Ok(AddProviderOk { key })) => {
+                    debug!(target: "pyrsia_node_comms",
+                        "Successfully put provider record {:?}",
+                        std::str::from_utf8(key.as_ref()).unwrap()
+                    );
+                }
+                QueryResult::StartProviding(Err(err)) => {
+                    error!(target: "pyrsia_node_comms","Failed to put provider record: {:?}", err);
+                }
+                _ => {
+                    warn!("")
+                }
+            }
+        }
     }
 }
 
@@ -170,69 +238,12 @@ impl NetworkBehaviourEventProcess<MdnsEvent> for MyBehaviour {
 
 impl NetworkBehaviourEventProcess<KademliaEvent> for MyBehaviour {
     // Called when `kademlia` produces an event.
-    fn inject_event(&mut self, message: KademliaEvent) {
-        if let KademliaEvent::OutboundQueryCompleted {
-            result,
-            id: query_id,
-            ..
-        } = message
-        {
-            debug!("Received query resule for Kademlia query id {:?}", query_id);
-            match result {
-                QueryResult::GetProviders(Ok(ok)) => {
-                    for peer in ok.providers {
-                        debug!(target: "pyrsia_node_comms",
-                        "Peer {:?} provides key {:?}",
-                        peer,
-                        std::str::from_utf8(ok.key.as_ref()).unwrap()
-                        );
-                    }
-                }
-                QueryResult::GetClosestPeers(Ok(ok)) => {
-                    println!("GetClosestPeers result {:?}", ok.peers);
-                    let connected_peers = itertools::join(ok.peers, ",");
-                    respond_send(self.response_sender.clone(), connected_peers);
-                }
-                QueryResult::GetProviders(Err(err)) => {
-                    error!(target: "pyrsia_node_comms", "Failed to get providers: {:?}", err);
-                }
-                QueryResult::GetRecord(Ok(ok)) => {
-                    for PeerRecord {
-                        record: Record { key, value, .. },
-                        ..
-                    } in ok.records
-                    {
-                        debug!(target: "pyrsia_node_comms",
-                            "Got record {:?} {:?}",
-                            std::str::from_utf8(key.as_ref()).unwrap(),
-                            std::str::from_utf8(&value).unwrap(),
-                        );
-                    }
-                }
-                QueryResult::GetRecord(Err(err)) => {
-                    error!(target: "pyrsia_node_comms","Failed to get record: {:?}", err);
-                }
-                QueryResult::PutRecord(Ok(PutRecordOk { key })) => {
-                    info!(target: "pyrsia_node_comms",
-                        "Successfully put record {:?}",
-                        std::str::from_utf8(key.as_ref()).unwrap()
-                    );
-                }
-                QueryResult::PutRecord(Err(err)) => {
-                    error!(target: "pyrsia_node_comms","Failed to put record: {:?}", err);
-                }
-                QueryResult::StartProviding(Ok(AddProviderOk { key })) => {
-                    debug!(target: "pyrsia_node_comms",
-                        "Successfully put provider record {:?}",
-                        std::str::from_utf8(key.as_ref()).unwrap()
-                    );
-                }
-                QueryResult::StartProviding(Err(err)) => {
-                    error!(target: "pyrsia_node_comms","Failed to put provider record: {:?}", err);
-                }
-                _ => {}
-            }
-        }
+    fn inject_event(&mut self, event: KademliaEvent) {
+        debug!("Received event: {:?}", &event);
+        self.log_kademlia_event(&event);
+        if let KademliaEvent::OutboundQueryCompleted{id, result, ..} = event {
+            MESSAGE_DELIVERY.deliver(id, result);
+        };
     }
 }
 pub fn respond_send(response_sender: tokio::sync::mpsc::Sender<String>, response: String) {
@@ -251,4 +262,21 @@ pub fn get_peers(mdns: &mut Mdns) -> Result<String, Error> {
     }
     let connected_peers = itertools::join(&unique_peers, ", ");
     Ok(connected_peers)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use crate::node_api::LOCAL_PEER_ID;
+    use super::*;
+
+    #[test]
+    pub fn inject_kademlia_event() {
+        let key = Key::new(&LOCAL_PEER_ID.to_bytes());
+
+        // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
+        let query_id = KADEMLIA_PROXY.get_record(&key, Quorum::One);
+        // Expect that Kademlia will call inject_event
+        MESSAGE_DELIVERY.receive(query_id, Duration::from_secs(2)).expect("the message should be successfully received.");
+    }
 }
