@@ -23,7 +23,7 @@ use anyhow::{bail, Result};
 use dashmap::DashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::{Arc, Condvar, LockResult, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 const INITIAL_MAP_CAPACITY: usize = 23;
@@ -100,18 +100,18 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
         let (mutex, cvar) = &*arc;
         let mut guard = match mutex.lock() {
             Ok(guard) => guard,
-            Err(error) => return bail!("Error unlocking mutex for receive: {}", error),
+            Err(error) => bail!("Error unlocking mutex for receive: {}", error),
         };
         while !*guard {
             guard = match cvar.wait_timeout(guard, timeout_duration) {
                 Ok((guard, wait_timeout_result)) => {
                     if wait_timeout_result.timed_out() {
-                        return bail!("MessageDelivery::receive timed out");
+                        bail!("MessageDelivery::receive timed out");
                     } else {
                         guard
                     }
                 }
-                Err(error) => return bail!("Error unlocking mutex for receive: {}", error),
+                Err(error) => bail!("Error unlocking mutex for receive: {}", error),
             }
         }
         Ok(())
@@ -182,7 +182,8 @@ mod tests {
             message_delivery.deliver(RECEIVE_BEFORE_DELIVER_ID, FakeTestEvent::Stop);
         });
         let message_delivery = &*arc;
-        let actual_message = message_delivery.receive(RECEIVE_BEFORE_DELIVER_ID, Duration::from_millis(2))?;
+        let actual_message =
+            message_delivery.receive(RECEIVE_BEFORE_DELIVER_ID, Duration::from_millis(2))?;
         match actual_message {
             FakeTestEvent::Stop => Ok(()),
             _ => bail!("Expected FakeTestEvent::Stop but got {:?}", actual_message),
