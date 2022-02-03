@@ -39,6 +39,7 @@ pub struct MessageDelivery<I: Eq + Hash, M: Debug> {
     id_message_map: DashMap<I, MessageEnvelope<M>>,
 }
 
+//TODO add a mechanism to evict old messages. Messages older than a few seconds will probably never be received, so we need to clean-up. see https://github.com/pyrsia/pyrsia/issues/318
 impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
     /// Create a MessageDelivery struct
     pub fn default() -> MessageDelivery<I, M> {

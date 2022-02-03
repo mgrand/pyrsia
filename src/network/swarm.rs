@@ -16,28 +16,28 @@
 
 use super::behavior::MyBehaviour;
 use super::transport::TcpTokioTransport;
+use libp2p::{gossipsub, PeerId};
 use libp2p::gossipsub::MessageId;
 use libp2p::gossipsub::{GossipsubMessage, IdentTopic, MessageAuthenticity, ValidationMode};
-use libp2p::{
-    floodsub::Floodsub,
-    mdns::Mdns,
-    swarm::SwarmBuilder,
-    Swarm,
-};
-use libp2p::gossipsub;
+use libp2p::{floodsub::Floodsub, mdns::Mdns, swarm::SwarmBuilder, Swarm};
 use std::collections::hash_map::DefaultHasher;
 
-use crate::node_manager::handlers::{FLOODSUB_TOPIC,LOCAL_PEER_ID};
+use crate::network::transport;
+use crate::node_api::LOCAL_KEY;
+use crate::node_manager::handlers::{FLOODSUB_TOPIC, LOCAL_PEER_ID};
+use libp2p_kad::store::MemoryStore;
+use libp2p_kad::Kademlia;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
-use crate::node_api::LOCAL_KEY;
+use futures::executor::block_on;
+use libp2p::core::muxing::StreamMuxerBox;
+use libp2p::core::transport::Boxed;
+use libp2p::swarm::NetworkBehaviour;
+use log::error;
+use tokio::sync::mpsc;
 
-pub type MyBehaviourSwarm<'a> = Swarm<MyBehaviour>;
-
-pub fn new(
-    transport: TcpTokioTransport,
-    response_sender: tokio::sync::mpsc::Sender<String>,
-) -> Result<MyBehaviourSwarm<'static>, ()> {
+/// This is the normal way that a Pyrsia node will create a swarm
+pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
     // To content-address message, we can take the hash of message and use it as an ID.
     let message_id_fn = |message: &GossipsubMessage| {
         let mut s = DefaultHasher::new();
@@ -54,22 +54,40 @@ pub fn new(
         .build()
         .expect("Valid config");
     // build a gossipsub network behaviour
-    let mut gossipsub: gossipsub::Gossipsub =
-        gossipsub::Gossipsub::new(MessageAuthenticity::Signed(LOCAL_KEY.clone()), gossipsub_config)
-            .expect("Correct configuration");
+    let mut gossipsub: gossipsub::Gossipsub = gossipsub::Gossipsub::new(
+        MessageAuthenticity::Signed(LOCAL_KEY.clone()),
+        gossipsub_config,
+    )
+        .expect("Correct configuration");
 
     // subscribes to our gossip topic
+    let gossip_topic = IdentTopic::new("pyrsia_file_share_topic");
     gossipsub.subscribe(&gossip_topic).unwrap();
 
-    let mdns = Mdns::new(Default::default()).await.unwrap();
+    let kademlia = Kademlia::new(*LOCAL_PEER_ID, MemoryStore::new(*LOCAL_PEER_ID));
+    let mdns = match block_on(Mdns::new(Default::default())) {
+        Ok(mdns) => mdns,
+        Err(error) => {
+            error!("Error setting up mdns: {}", error);
+            return Err(())
+        }
+    };
+    let (response_sender, response_receiver) = mpsc::channel(32);
+    let transport: TcpTokioTransport = transport::new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
     let mut behaviour = MyBehaviour::new(
         gossipsub,
         Floodsub::new(LOCAL_PEER_ID.clone()),
+        kademlia,
         mdns,
         response_sender,
+        response_receiver,
     );
     behaviour.floodsub_mut().subscribe(FLOODSUB_TOPIC.clone());
+    new(transport, behaviour)
+}
 
+/// This can be used by unit tests to use alternate transport and behavior
+pub fn new<T: NetworkBehaviour>(transport: Boxed<(PeerId, StreamMuxerBox)>, behaviour: T) -> Result<Swarm<T>, ()> {
     let swarm = SwarmBuilder::new(transport, behaviour, *LOCAL_PEER_ID)
         // We want the connection background tasks to be spawned
         // onto the tokio runtime.
@@ -80,28 +98,19 @@ pub fn new(
     Ok(swarm)
 }
 
-// TODO: It would be nicer to have a struct with functions but the high level code is highly coupled with the API of libp2p's Swarm
+#[cfg(test)]
+mod tests {
+    use libp2p::identity;
+    use libp2p::swarm::DummyBehaviour;
+    use super::*;
 
-// pub struct MyBehaviourSwarm {
-//     swarm: Swarm<MyBehaviour>,
-// }
-
-// impl MyBehaviourSwarm {
-//     pub async fn new(
-//         topic: Topic,
-//         transport: TcpTokioTransport,
-//         peer_id: PeerId,
-//     ) -> Result<MyBehaviourSwarm, ()> {
-//         let mdns = Mdns::new(Default::default()).await.unwrap();
-//         let mut behaviour = MyBehaviour::new(Floodsub::new(peer_id.clone()), mdns);
-//         behaviour.floodsub().subscribe(topic.clone());
-//         let swarm = SwarmBuilder::new(transport, behaviour, peer_id)
-//             // We want the connection background tasks to be spawned
-//             // onto the tokio runtime.
-//             .executor(Box::new(|fut| {
-//                 tokio::spawn(fut);
-//             }))
-//             .build();
-//         Ok(MyBehaviourSwarm { swarm })
-//     }
-// }
+    #[test]
+    pub fn new_test() {
+        let local_key = identity::Keypair::generate_ed25519();
+        let local_peer_id = PeerId::from(local_key.public());
+        let transport = block_on(libp2p::development_transport(local_key)).unwrap();
+        let behaviour = DummyBehaviour::default();
+        let swarm = new(transport, behaviour.clone()).unwrap();
+        assert!(std::ptr::eq(&behaviour, swarm.behaviour()), "The swarm should have the same behavior used to construct it");
+    }
+}

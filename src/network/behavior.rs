@@ -16,8 +16,9 @@
 
 extern crate dirs;
 
-use crate::node_manager::handlers::{ART_MGR, KADEMLIA_PROXY};
+use crate::node_manager::handlers::ART_MGR;
 
+use crate::node_api::MESSAGE_DELIVERY;
 use libp2p::gossipsub;
 use libp2p::{
     floodsub::{Floodsub, FloodsubEvent},
@@ -30,9 +31,10 @@ use libp2p::{
     swarm::NetworkBehaviourEventProcess,
     NetworkBehaviour, PeerId,
 };
+use libp2p_kad::store::MemoryStore;
+use libp2p_kad::Kademlia;
 use log::{debug, error, info, warn};
 use std::collections::HashSet;
-use crate::node_api::MESSAGE_DELIVERY;
 
 // We create a custom network behaviour that combines floodsub and mDNS.
 // The derive generates a delegating `NetworkBehaviour` impl which in turn
@@ -43,24 +45,43 @@ use crate::node_api::MESSAGE_DELIVERY;
 pub struct MyBehaviour {
     gossipsub: gossipsub::Gossipsub,
     floodsub: Floodsub,
+    kademlia: Kademlia<MemoryStore>,
     mdns: Mdns,
     #[behaviour(ignore)]
     response_sender: tokio::sync::mpsc::Sender<String>,
+    #[behaviour(ignore)]
+    response_receiver: tokio::sync::mpsc::Receiver<String>,
 }
 
 impl MyBehaviour {
     pub fn new(
         gossipsub: gossipsub::Gossipsub,
         floodsub: Floodsub,
+        kademlia: Kademlia<MemoryStore>,
         mdns: Mdns,
         response_sender: tokio::sync::mpsc::Sender<String>,
+        response_receiver: tokio::sync::mpsc::Receiver<String>,
     ) -> Self {
         MyBehaviour {
             gossipsub,
             floodsub,
+            kademlia,
             mdns,
             response_sender,
+            response_receiver,
         }
+    }
+
+    pub fn kademlia(&mut self) -> &mut Kademlia<MemoryStore> {
+        &mut self.kademlia
+    }
+
+    pub fn response_sender(&mut self) -> &mut tokio::sync::mpsc::Sender<String> {
+        &mut self.response_sender
+    }
+
+    pub fn response_receiver(&mut self) -> &mut tokio::sync::mpsc::Receiver<String> {
+        &mut self.response_receiver
     }
 
     pub fn gossipsub_mut(&mut self) -> &mut gossipsub::Gossipsub {
@@ -75,11 +96,11 @@ impl MyBehaviour {
         let num = std::num::NonZeroUsize::new(2)
             .ok_or(Error::ValueTooLarge)
             .unwrap();
-        KADEMLIA_PROXY.get_record(&Key::new(&hash), Quorum::N(num));
+        self.kademlia.get_record(&Key::new(&hash), Quorum::N(num));
     }
 
     pub async fn list_peers(&mut self, peer_id: PeerId) {
-        KADEMLIA_PROXY.get_closest_peers(peer_id);
+        self.kademlia.get_closest_peers(peer_id);
     }
 
     pub async fn list_peers_cmd(&mut self) {
@@ -91,7 +112,7 @@ impl MyBehaviour {
 
     pub fn advertise_blob(&mut self, hash: String, value: Vec<u8>) -> Result<QueryId, Error> {
         let num = std::num::NonZeroUsize::new(2).ok_or(Error::ValueTooLarge)?;
-        KADEMLIA_PROXY.put_record(Record::new(Key::new(&hash), value), Quorum::N(num))
+        self.kademlia.put_record(Record::new(Key::new(&hash), value), Quorum::N(num))
     }
 
     fn log_kademlia_event(&mut self, message: &KademliaEvent) {
@@ -115,6 +136,7 @@ impl MyBehaviour {
                 QueryResult::GetClosestPeers(Ok(ref ok)) => {
                     info!("GetClosestPeers result {:?}", ok.peers);
                     let connected_peers = itertools::join(ok.peers.clone(), ",");
+                    // TODO This should use MessageDelivery. See issue https://github.com/pyrsia/pyrsia/issues/317
                     respond_send(self.response_sender.clone(), connected_peers);
                 }
                 QueryResult::GetProviders(Err(err)) => {
@@ -221,14 +243,14 @@ impl NetworkBehaviourEventProcess<MdnsEvent> for MyBehaviour {
             MdnsEvent::Discovered(list) => {
                 for (peer, multiaddr) in list {
                     self.floodsub.add_node_to_partial_view(peer);
-                    KADEMLIA_PROXY.add_address(&peer, multiaddr);
+                    self.kademlia.add_address(&peer, multiaddr);
                 }
             }
             MdnsEvent::Expired(list) => {
                 for (peer, multiaddr) in list {
                     if !self.mdns.has_node(&peer) {
                         self.floodsub.remove_node_from_partial_view(&peer);
-                        KADEMLIA_PROXY.remove_address(&peer, &multiaddr);
+                        self.kademlia.remove_address(&peer, &multiaddr);
                     }
                 }
             }
@@ -241,7 +263,7 @@ impl NetworkBehaviourEventProcess<KademliaEvent> for MyBehaviour {
     fn inject_event(&mut self, event: KademliaEvent) {
         debug!("Received event: {:?}", &event);
         self.log_kademlia_event(&event);
-        if let KademliaEvent::OutboundQueryCompleted{id, result, ..} = event {
+        if let KademliaEvent::OutboundQueryCompleted { id, result, .. } = event {
             MESSAGE_DELIVERY.deliver(id, result);
         };
     }
@@ -266,17 +288,19 @@ pub fn get_peers(mdns: &mut Mdns) -> Result<String, Error> {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-    use crate::node_api::LOCAL_PEER_ID;
     use super::*;
+    use crate::node_api::{LOCAL_PEER_ID, SWARM_PROXY};
+    use std::time::Duration;
 
     #[test]
     pub fn inject_kademlia_event() {
         let key = Key::new(&LOCAL_PEER_ID.to_bytes());
 
         // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
-        let query_id = KADEMLIA_PROXY.get_record(&key, Quorum::One);
+        let query_id = SWARM_PROXY.behaviour_mut(|b| b.kademlia().get_record(&key, Quorum::One));
         // Expect that Kademlia will call inject_event
-        MESSAGE_DELIVERY.receive(query_id, Duration::from_secs(2)).expect("the message should be successfully received.");
+        MESSAGE_DELIVERY
+            .receive(query_id, Duration::from_secs(2))
+            .expect("the message should be successfully received.");
     }
 }

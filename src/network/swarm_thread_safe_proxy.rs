@@ -53,39 +53,39 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         (*self.ref_cell()).borrow().network_info()
     }
 
-    pub fn listen_on(&mut self, addr: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
+    pub fn listen_on(&self, addr: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
         (*self.ref_cell()).borrow_mut().listen_on(addr)
     }
 
-    pub fn remove_listener(&mut self, id: ListenerId) -> bool {
+    pub fn remove_listener(&self, id: ListenerId) -> bool {
         (*self.ref_cell()).borrow_mut().remove_listener(id)
     }
 
-    pub fn dial(&mut self, opts: impl Into<DialOpts>) -> Result<(), DialError> {
+    pub fn dial(&self, opts: impl Into<DialOpts>) -> Result<(), DialError> {
         (*self.ref_cell()).borrow_mut().dial(opts)
     }
 
-    pub fn local_peer_id(&self) -> &PeerId {
-        (*self.ref_cell()).borrow().local_peer_id()
+    pub fn local_peer_id(&self) -> PeerId {
+        (*self.ref_cell()).borrow().local_peer_id().clone()
     }
 
-    pub fn add_external_addresses(&mut self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
+    pub fn add_external_addresses(&self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
         (*self.ref_cell()).borrow_mut().add_external_address(a, s)
     }
 
-    pub fn remove_external_addresses(&mut self, a: &Multiaddr) -> bool {
+    pub fn remove_external_addresses(&self, a: &Multiaddr) -> bool {
         (*self.ref_cell()).borrow_mut().remove_external_address(a)
     }
 
-    pub fn ban_peer_id(&mut self, peer_id: PeerId) {
+    pub fn ban_peer_id(&self, peer_id: PeerId) {
         (*self.ref_cell()).borrow_mut().ban_peer_id(peer_id)
     }
 
-    pub fn unban_peer_id(&mut self, peer_id: PeerId) {
+    pub fn unban_peer_id(&self, peer_id: PeerId) {
         (*self.ref_cell()).borrow_mut().unban_peer_id(peer_id)
     }
 
-    pub fn disconnect_peer_id(&mut self, peer_id: PeerId) -> Result<(), ()> {
+    pub fn disconnect_peer_id(&self, peer_id: PeerId) -> Result<(), ()> {
         (*self.ref_cell()).borrow_mut().disconnect_peer_id(peer_id)
     }
 
@@ -93,12 +93,12 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         (*self.ref_cell()).borrow().is_connected(peer_id)
     }
 
-    pub fn behaviour(&self) -> &T {
-        (*self.ref_cell()).borrow().behaviour()
+    pub fn with_behaviour<U>(&self, f: fn (&T) -> U) -> U {
+        f((*self.ref_cell()).borrow().behaviour())
     }
 
-    pub fn behaviour_mut(&mut self) -> &mut T {
-        (*self.ref_cell()).borrow_mut().behaviour_mut()
+    pub fn behaviour_mut<U>(&self, f: fn(&mut T) -> U) -> U {
+       f((*self.ref_cell()).borrow_mut().behaviour_mut())
     }
 }
 

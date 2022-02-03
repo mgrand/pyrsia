@@ -33,8 +33,9 @@ use std::panic::UnwindSafe;
 use std::str;
 use std::{fs, panic};
 use libp2p::floodsub::Topic;
-use libp2p::gossipsub::IdentTopic;
 use libp2p_kad::{QueryId, QueryResult};
+use crate::network;
+use crate::network::behavior::MyBehaviour;
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
 //TODO: read from CLI config file
@@ -44,10 +45,9 @@ lazy_static! {
     pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> = MessageDelivery::default();
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
-    pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_converstation");
-    pub static ref GOSSIP_TOPIC: IdentTopic = IdentTopic::new("pyrsia_file_share_topic");
+    pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_conversation");
 
-    pub static ref KADEMLIA_PROXY: KademliaThreadSafeProxy = KademliaThreadSafeProxy::default();
+    pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> = SwarmThreadSafeProxy::new(network::swarm::default().expect("Failed to create swarm"));
     pub static ref ART_MGR: ArtifactManager = {
         log_static_initialization_failure(
             "Artifact Manager Directory",

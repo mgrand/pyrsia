@@ -104,18 +104,6 @@ async fn main() {
         )
         .get_matches();
 
-    let transport: TcpTokioTransport = new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
-
-    let (respond_tx, respond_rx) = mpsc::channel(32);
-
-    // Create a Swarm to manage peers and events.
-    let mut swarm: MyBehaviourSwarm = swarm::new(
-        transport,
-        respond_tx,
-    )?;
-    // .await
-    // .unwrap();
-
     // Reach out to another node if specified
     if let Some(to_dial) = matches.value_of("peer") {
         let addr: Multiaddr = to_dial.parse().unwrap();
