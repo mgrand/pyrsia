@@ -112,9 +112,9 @@ async fn main() {
     let mut swarm: MyBehaviourSwarm = swarm::new(
         transport,
         respond_tx,
-    )
-    .await
-    .unwrap();
+    )?;
+    // .await
+    // .unwrap();
 
     // Reach out to another node if specified
     if let Some(to_dial) = matches.value_of("peer") {

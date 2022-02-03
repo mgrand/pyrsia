@@ -20,12 +20,12 @@ use super::HashAlgorithm;
 use super::Hash;
 
 use crate::metadata_manager::metadata::Metadata;
-use crate::network::kademlia_thread_safe_proxy::KademliaThreadSafeProxy;
+use crate::network::swarm_thread_safe_proxy::SwarmThreadSafeProxy;
 use crate::network::message_delivery::MessageDelivery;
 use anyhow::{Context, Result};
 use byte_unit::Byte;
 use lazy_static::lazy_static;
-use libp2p::{identity, kad::record::store::MemoryStore, PeerId};
+use libp2p::{identity, PeerId};
 use log::{debug, error, info};
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -47,7 +47,6 @@ lazy_static! {
     pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_converstation");
     pub static ref GOSSIP_TOPIC: IdentTopic = IdentTopic::new("pyrsia_file_share_topic");
 
-    pub static ref MEMORY_STORE: MemoryStore = MemoryStore::new(*LOCAL_PEER_ID);
     pub static ref KADEMLIA_PROXY: KademliaThreadSafeProxy = KademliaThreadSafeProxy::default();
     pub static ref ART_MGR: ArtifactManager = {
         log_static_initialization_failure(
@@ -272,4 +271,7 @@ mod tests {
     pub fn message_delivery_is_initialized() {
         info!("Message_delivery: {:?}", *MESSAGE_DELIVERY)
     }
+
+    #[test]
+    pub fn finish() {panic!("!")}
 }

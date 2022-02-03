@@ -18,7 +18,7 @@ pub mod behavior;
 mod client;
 pub mod error;
 pub mod http;
-pub mod kademlia_thread_safe_proxy;
+pub mod swarm_thread_safe_proxy;
 pub mod message_delivery;
 pub mod swarm;
 pub mod torrent;

@@ -34,7 +34,7 @@ use crate::node_api::LOCAL_KEY;
 
 pub type MyBehaviourSwarm<'a> = Swarm<MyBehaviour>;
 
-pub async fn new(
+pub fn new(
     transport: TcpTokioTransport,
     response_sender: tokio::sync::mpsc::Sender<String>,
 ) -> Result<MyBehaviourSwarm<'static>, ()> {
