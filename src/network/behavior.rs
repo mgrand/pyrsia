@@ -33,8 +33,10 @@ use libp2p::{
 };
 use libp2p_kad::store::MemoryStore;
 use libp2p_kad::Kademlia;
-use log::{debug, error, info, warn};
+use log::{debug, error, info, log, log_enabled, warn};
 use std::collections::HashSet;
+use libp2p_kad::KademliaEvent::OutboundQueryCompleted;
+use log::Level::Debug;
 
 // We create a custom network behaviour that combines floodsub and mDNS.
 // The derive generates a delegating `NetworkBehaviour` impl which in turn
@@ -125,34 +127,35 @@ impl MyBehaviour {
             debug!("Received query result for Kademlia query id {:?}", query_id);
             match result {
                 QueryResult::GetProviders(Ok(ok)) => {
-                    for peer in ok.providers.clone() {
-                        debug!(target: "pyrsia_node_comms",
+                    if log_enabled!(Debug) {
+                        for peer in ok.providers.clone() {
+                            debug!(target: "pyrsia_node_comms",
                         "Peer {:?} provides key {:?}",
                         peer,
                         std::str::from_utf8(ok.key.as_ref()).unwrap()
                         );
+                        }
                     }
                 }
                 QueryResult::GetClosestPeers(Ok(ref ok)) => {
                     info!("GetClosestPeers result {:?}", ok.peers);
-                    let connected_peers = itertools::join(ok.peers.clone(), ",");
-                    // TODO This should use MessageDelivery. See issue https://github.com/pyrsia/pyrsia/issues/317
-                    respond_send(self.response_sender.clone(), connected_peers);
                 }
                 QueryResult::GetProviders(Err(err)) => {
                     error!(target: "pyrsia_node_comms", "Failed to get providers: {:?}", err);
                 }
                 QueryResult::GetRecord(Ok(ok)) => {
-                    for PeerRecord {
-                        record: Record { key, value, .. },
-                        ..
-                    } in ok.records.clone()
-                    {
-                        debug!(target: "pyrsia_node_comms",
+                    if log_enabled!(Debug) {
+                        for PeerRecord {
+                            record: Record { key, value, .. },
+                            ..
+                        } in ok.records.clone()
+                        {
+                            debug!(target: "pyrsia_node_comms",
                             "Got record {:?} {:?}",
                             std::str::from_utf8(key.as_ref()).unwrap(),
                             std::str::from_utf8(&value).unwrap(),
                         );
+                        }
                     }
                 }
                 QueryResult::GetRecord(Err(err)) => {
@@ -264,7 +267,13 @@ impl NetworkBehaviourEventProcess<KademliaEvent> for MyBehaviour {
         debug!("Received event: {:?}", &event);
         self.log_kademlia_event(&event);
         if let KademliaEvent::OutboundQueryCompleted { id, result, .. } = event {
-            MESSAGE_DELIVERY.deliver(id, result);
+            if let QueryResult::GetClosestPeers(Ok(peers), ..) = result {
+                // TODO For now we are handling GetClosest Peer in a legacy way. This should use MessageDelivery. See https://github.com/pyrsia/pyrsia/issues/317
+                let connected_peers = itertools::join(peers.clone(), ",");
+                respond_send(self.response_sender.clone(), connected_peers);
+            } else {
+                MESSAGE_DELIVERY.deliver(id, result);
+            }
         };
     }
 }

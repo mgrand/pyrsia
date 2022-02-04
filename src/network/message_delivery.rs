@@ -25,6 +25,7 @@ use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
+use log::debug;
 
 const INITIAL_MAP_CAPACITY: usize = 23;
 
@@ -40,7 +41,7 @@ pub struct MessageDelivery<I: Eq + Hash, M: Debug> {
 }
 
 //TODO add a mechanism to evict old messages. Messages older than a few seconds will probably never be received, so we need to clean-up. see https://github.com/pyrsia/pyrsia/issues/318
-impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
+impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
     /// Create a MessageDelivery struct
     pub fn default() -> MessageDelivery<I, M> {
         MessageDelivery {
@@ -50,6 +51,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
 
     /// Make a message available for delivery to the thread that is or will be waiting for a message associated with the given id
     pub fn deliver(&self, id: I, message: M) {
+        debug!("deliver(id={:?}, message={:?}", id, message);
         let delivery_envelope = MessageEnvelope {
             arc: None,
             message: Some(message),
@@ -61,6 +63,7 @@ impl<I: Eq + Hash + Clone, M: Debug> MessageDelivery<I, M> {
 
     /// Receive a message associated with the given IT that is already available or wait for it.
     pub fn receive(&self, id: I, timeout_duration: Duration) -> Result<M> {
+        debug!("receive(id={:?}", id);
         let arc = Arc::new((Mutex::new(false), Condvar::new()));
         let receiving_envelope = MessageEnvelope {
             arc: Some(arc.clone()),
