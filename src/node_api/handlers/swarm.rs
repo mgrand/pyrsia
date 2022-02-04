@@ -17,28 +17,66 @@
 use super::{RegistryError, RegistryErrorCode};
 use crate::block_chain::block_chain::Blockchain;
 use crate::node_manager::{handlers::*, model::cli::Status};
-use log::{debug, error, info};
+use libp2p_kad::{kbucket, GetClosestPeersError, GetClosestPeersOk, QueryId, QueryResult};
+use log::{debug, error, info, warn};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use warp::{http::StatusCode, Rejection, Reply};
 
-pub async fn handle_get_peers(
-    tx: Sender<String>,
-    rx: Arc<Mutex<Receiver<String>>>,
-) -> Result<impl Reply, Rejection> {
-    match tx.send(String::from("peers")).await {
-        Ok(_) => debug!("request for peers sent"),
-        Err(_) => error!("failed to send stdin input"),
-    }
+const GET_CLOSEST_PEERS_TIMEOUT_SECONDS: u64 = 2;
 
-    let peers = rx.lock().await.recv().await.unwrap();
-    println!("Got received_peers: {}", peers);
-    Ok(warp::http::response::Builder::new()
-        .header("Content-Type", "application/octet-stream")
-        .status(StatusCode::OK)
-        .body(peers)
-        .unwrap())
+pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
+    debug!("requesting closest peers");
+    let query_id: QueryId = SWARM_PROXY.with_behaviour_mut((), |arg| {
+        arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID)
+    });
+    match MESSAGE_DELIVERY.receive(
+        query_id,
+        Duration::from_secs(GET_CLOSEST_PEERS_TIMEOUT_SECONDS),
+    ) {
+        Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
+            peers,
+            ..
+        }))) => {
+            info!("Got peers: {:?}", peers);
+            Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "application/octet-stream")
+                .status(StatusCode::OK)
+                .body(peers)
+                .unwrap())
+        }
+        Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
+            GetClosestPeersError::Timeout { peers, .. },
+        ))) => {
+            warn!("Got some peers but timed out: {:?}", peers);
+            Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "application/octet-stream")
+                .status(StatusCode::PARTIAL_CONTENT)
+                .body(peers)
+                .unwrap())
+        }
+        Ok(other) => {
+            error!(
+                "Expected a QueryResult::GetClosetsPeers, but got {:?}",
+                other
+            );
+            Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                .unwrap())
+        }
+        Err(error) => {
+            error!("Error getting closest peers: {}", error);
+            Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                .unwrap())
+        }
+    }
 }
 
 pub async fn handle_get_status(

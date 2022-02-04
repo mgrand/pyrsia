@@ -33,9 +33,8 @@ use libp2p::{
 };
 use libp2p_kad::store::MemoryStore;
 use libp2p_kad::Kademlia;
-use log::{debug, error, info, log, log_enabled, warn};
+use log::{debug, error, info, log_enabled, warn};
 use std::collections::HashSet;
-use libp2p_kad::KademliaEvent::OutboundQueryCompleted;
 use log::Level::Debug;
 
 // We create a custom network behaviour that combines floodsub and mDNS.
@@ -49,10 +48,6 @@ pub struct MyBehaviour {
     floodsub: Floodsub,
     kademlia: Kademlia<MemoryStore>,
     mdns: Mdns,
-    #[behaviour(ignore)]
-    response_sender: tokio::sync::mpsc::Sender<String>,
-    #[behaviour(ignore)]
-    response_receiver: tokio::sync::mpsc::Receiver<String>,
 }
 
 impl MyBehaviour {
@@ -61,29 +56,17 @@ impl MyBehaviour {
         floodsub: Floodsub,
         kademlia: Kademlia<MemoryStore>,
         mdns: Mdns,
-        response_sender: tokio::sync::mpsc::Sender<String>,
-        response_receiver: tokio::sync::mpsc::Receiver<String>,
     ) -> Self {
         MyBehaviour {
             gossipsub,
             floodsub,
             kademlia,
             mdns,
-            response_sender,
-            response_receiver,
         }
     }
 
     pub fn kademlia(&mut self) -> &mut Kademlia<MemoryStore> {
         &mut self.kademlia
-    }
-
-    pub fn response_sender(&mut self) -> &mut tokio::sync::mpsc::Sender<String> {
-        &mut self.response_sender
-    }
-
-    pub fn response_receiver(&mut self) -> &mut tokio::sync::mpsc::Receiver<String> {
-        &mut self.response_receiver
     }
 
     pub fn gossipsub_mut(&mut self) -> &mut gossipsub::Gossipsub {
@@ -267,13 +250,7 @@ impl NetworkBehaviourEventProcess<KademliaEvent> for MyBehaviour {
         debug!("Received event: {:?}", &event);
         self.log_kademlia_event(&event);
         if let KademliaEvent::OutboundQueryCompleted { id, result, .. } = event {
-            if let QueryResult::GetClosestPeers(Ok(peers), ..) = result {
-                // TODO For now we are handling GetClosest Peer in a legacy way. This should use MessageDelivery. See https://github.com/pyrsia/pyrsia/issues/317
-                let connected_peers = itertools::join(peers.clone(), ",");
-                respond_send(self.response_sender.clone(), connected_peers);
-            } else {
                 MESSAGE_DELIVERY.deliver(id, result);
-            }
         };
     }
 }
@@ -303,10 +280,8 @@ mod tests {
 
     #[test]
     pub fn inject_kademlia_event() {
-        let key = Key::new(&LOCAL_PEER_ID.to_bytes());
-
         // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
-        let query_id = SWARM_PROXY.behaviour_mut(|b| b.kademlia().get_record(&key, Quorum::One));
+        let query_id = SWARM_PROXY.behaviour_mut((),|b| b.1.kademlia().get_record(&Key::new(&LOCAL_PEER_ID.to_bytes()), Quorum::One));
         // Expect that Kademlia will call inject_event
         MESSAGE_DELIVERY
             .receive(query_id, Duration::from_secs(2))

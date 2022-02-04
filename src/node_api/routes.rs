@@ -33,7 +33,7 @@ pub fn make_node_routes(
     let peers = warp::path!("peers")
         .and(warp::get())
         .and(warp::path::end())
-        .and_then(move || handle_get_peers(tx1.clone(), rx1.clone()));
+        .and_then(handle_get_peers);
 
     let status = warp::path!("status")
         .and(warp::get())

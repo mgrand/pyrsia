@@ -30,10 +30,10 @@ use pyrsia::docker::v2::routes::*;
 use pyrsia::document_store::document_store::DocumentStore;
 use pyrsia::document_store::document_store::IndexSpec;
 use pyrsia::logging::*;
-use pyrsia::network::swarm::{self, MyBehaviourSwarm};
+use pyrsia::network::swarm::{self};
 use pyrsia::network::transport::{new_tokio_tcp_transport, TcpTokioTransport};
 use pyrsia::node_api::routes::make_node_routes;
-use pyrsia::node_api::{LOCAL_KEY, LOCAL_PEER_ID};
+use pyrsia::node_api::{LOCAL_KEY, LOCAL_PEER_ID, SWARM_PROXY};
 
 use clap::{App, Arg, ArgMatches};
 use futures::StreamExt;
@@ -49,6 +49,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
+use std::borrow::Borrow;
 use tokio::{
     io::{self, AsyncBufReadExt},
     sync::{mpsc, Mutex, MutexGuard},
@@ -62,52 +63,12 @@ const DEFAULT_PORT: &str = "7888";
 async fn main() {
     pretty_env_logger::init();
 
-    // create the connection to the documentStore.
-    let index_one = "index_one";
-    let field1 = "most_significant_field";
-    let idx1 = IndexSpec::new(index_one, vec![field1]);
-
-    let matches: ArgMatches = App::new("Pyrsia Node")
-        .version("0.1.0")
-        .author(clap::crate_authors!(", "))
-        .about("Application to connect to and participate in the Pyrsia network")
-        .arg(
-            Arg::new("host")
-                .short('H')
-                .long("host")
-                .value_name("HOST")
-                .default_value(DEFAULT_HOST)
-                .takes_value(true)
-                .required(false)
-                .multiple(false)
-                .help("Sets the host address to bind to for the Docker API"),
-        )
-        .arg(
-            Arg::new("port")
-                .short('p')
-                .long("port")
-                .value_name("PORT")
-                .default_value(DEFAULT_PORT)
-                .takes_value(true)
-                .required(false)
-                .multiple(false)
-                .help("Sets the port to listen to for the Docker API"),
-        )
-        .arg(
-            Arg::new("peer")
-                //.short("p")
-                .long("peer")
-                .takes_value(true)
-                .required(false)
-                .multiple(false)
-                .help("Provide an explicit peerId to connect with"),
-        )
-        .get_matches();
+    let matches: ArgMatches = process_command_line_arguments();
 
     // Reach out to another node if specified
     if let Some(to_dial) = matches.value_of("peer") {
         let addr: Multiaddr = to_dial.parse().unwrap();
-        swarm.dial(addr).unwrap();
+        SWARM_PROXY.dial(addr).unwrap();
         info!("Dialed {:?}", to_dial)
     }
 
@@ -115,7 +76,7 @@ async fn main() {
     let mut stdin = io::BufReader::new(io::stdin()).lines();
 
     // Listen on all interfaces and whatever port the OS assigns
-    swarm
+    SWARM_PROXY
         .listen_on("/ip4/0.0.0.0/tcp/0".parse().unwrap())
         .unwrap();
 
@@ -140,7 +101,8 @@ async fn main() {
     let tx1 = tx.clone();
 
     // swarm specific tx,rx
-    // need better handling of all these channel resources
+    // TODO need better handling of all these channel resources: There is better. See https://github.com/pyrsia/pyrsia/issues/317
+    let respond_rx = SWARM_PROXY.with_behaviour((), |arg| arg.1.);
     let shared_stats = Arc::new(Mutex::new(respond_rx));
 
     let my_stats = shared_stats.clone();
@@ -270,8 +232,57 @@ async fn main() {
     }
 }
 
+fn process_command_line_arguments() -> ArgMatches {
+    App::new("Pyrsia Node")
+        .version("0.1.0")
+        .author(clap::crate_authors!(", "))
+        .about("Application to connect to and participate in the Pyrsia network")
+        .arg(
+            Arg::new("host")
+                .short('H')
+                .long("host")
+                .value_name("HOST")
+                .default_value(DEFAULT_HOST)
+                .takes_value(true)
+                .required(false)
+                .multiple(false)
+                .help("Sets the host address to bind to for the Docker API"),
+        )
+        .arg(
+            Arg::new("port")
+                .short('p')
+                .long("port")
+                .value_name("PORT")
+                .default_value(DEFAULT_PORT)
+                .takes_value(true)
+                .required(false)
+                .multiple(false)
+                .help("Sets the port to listen to for the Docker API"),
+        )
+        .arg(
+            Arg::new("peer")
+                //.short("p")
+                .long("peer")
+                .takes_value(true)
+                .required(false)
+                .multiple(false)
+                .help("Provide an explicit peerId to connect with"),
+        )
+        .get_matches()
+}
+
 enum EventType {
     Response(String),
     Message(String),
     Input(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn placeholder_test() {
+        assert!(true);
+    }
 }

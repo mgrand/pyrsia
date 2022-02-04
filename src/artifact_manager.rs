@@ -17,6 +17,7 @@
 extern crate lava_torrent;
 extern crate walkdir;
 
+use crate::node_api::SWARM_PROXY;
 use crate::node_manager::handlers::LOCAL_PEER_ID;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use fs_extra::dir::get_size;
@@ -28,7 +29,6 @@ use libp2p_kad::{Quorum, Record};
 use log::{debug, error, info, warn}; //log_enabled, Level,
 use multihash::{Multihash, MultihashGeneric};
 use path::PathBuf;
-use std::borrow::BorrowMut;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::ffi::{OsStr, OsString};
@@ -43,7 +43,6 @@ use std::str::FromStr;
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString};
 use walkdir::{DirEntry, WalkDir};
-use crate::node_api::SWARM_PROXY;
 
 ///
 /// # Artifact Manager
@@ -421,7 +420,10 @@ impl ArtifactManager {
 
         fn put_record_in_dht(torrent_path: &Path, dht_record: Record) -> Result<()> {
             // TODO We should look at configuring a numeric quorum size.
-            match SWARM_PROXY.behaviour_mut(|b|b.kademlia().put_record(dht_record, Quorum::Majority)) {
+            match SWARM_PROXY.behaviour_mut(dht_record,|arg|{
+                let (dht_record, behaviour) = arg;
+                behaviour.kademlia().put_record(dht_record, Quorum::Majority)
+            }) {
                 Ok(query_id) => {
                     info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path.display());
                     Ok(())
@@ -753,6 +755,7 @@ mod tests {
     use crate::artifact_manager::{ArtifactManager, Hash, HashAlgorithm};
     use anyhow::{anyhow, Context};
     use env_logger::Target;
+    use libp2p_kad::record::Key;
     use log::{info, LevelFilter};
     use num_traits::cast::AsPrimitive;
     use rand::{Rng, RngCore};
@@ -761,7 +764,6 @@ mod tests {
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use libp2p_kad::record::Key;
     use stringreader::StringReader;
 
     pub use super::*;
@@ -900,7 +902,10 @@ mod tests {
         let file_torrent = read_torrent_from_file(path);
 
         // get torrent from DHT
-        let query_id = SWARM_PROXY.behaviour_mut().kademlia().get_record(&Key::new(&multihash.to_bytes()), Quorum::One);
+        let query_id = SWARM_PROXY
+            .behaviour_mut()
+            .kademlia()
+            .get_record(&Key::new(&multihash.to_bytes()), Quorum::One);
 
         //TODO The test to see if the torrent is in the DHT involves code that will be in the next PR.
         Ok(())
