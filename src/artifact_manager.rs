@@ -17,7 +17,7 @@
 extern crate lava_torrent;
 extern crate walkdir;
 
-use crate::node_api::SWARM_PROXY;
+use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY};
 use crate::node_manager::handlers::LOCAL_PEER_ID;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use fs_extra::dir::get_size;
@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::ffi::{OsStr, OsString};
 use std::fmt::{Display, Formatter};
-use std::fs;
+use std::{fs, thread};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufWriter, Read, Write};
@@ -426,6 +426,12 @@ impl ArtifactManager {
             }) {
                 Ok(query_id) => {
                     info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path.display());
+                    thread::spawn(move || {
+                        match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
+                            Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path.display(), query_result),
+                            Err(error) => error!("Failed to receive response for adding torent to DHT: {}", error)
+                        }
+                    });
                     Ok(())
                 }
                 Err(error) => bail!(
