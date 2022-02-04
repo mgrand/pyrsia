@@ -23,7 +23,6 @@ use crate::metadata_manager::metadata::Metadata;
 use crate::network::swarm_thread_safe_proxy::SwarmThreadSafeProxy;
 use crate::network::message_delivery::MessageDelivery;
 use anyhow::{Context, Result};
-use byte_unit::Byte;
 use lazy_static::lazy_static;
 use libp2p::{identity, PeerId};
 use log::{debug, error, info};
@@ -40,7 +39,7 @@ use crate::network::behavior::MyBehaviour;
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
 //TODO: read from CLI config file
-pub const ALLOCATED_SPACE_FOR_ARTIFACTS: &str = "10.84 GB";
+pub const ALLOCATED_SPACE_FOR_ARTIFACTS: usize = 10840000;
 
 lazy_static! {
     pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> = MessageDelivery::default();
@@ -122,25 +121,21 @@ pub fn get_arts_count() -> Result<usize, anyhow::Error> {
 }
 
 pub fn get_space_available(repository_path: &str) -> Result<u64, anyhow::Error> {
-    let disk_used_bytes = ART_MGR.space_used(repository_path)?;
+    let disk_used_bytes = ART_MGR.space_used(repository_path)? as usize;
 
-    let mut available_space: u64 = 0;
-    let total_allocated_size: u64 = Byte::from_str(ALLOCATED_SPACE_FOR_ARTIFACTS)
-        .unwrap()
-        .get_bytes();
+    let mut available_space: usize = 0;
+    let total_allocated_size: usize = ALLOCATED_SPACE_FOR_ARTIFACTS;
 
     if total_allocated_size > disk_used_bytes {
         available_space = total_allocated_size - disk_used_bytes;
     }
-    Ok(available_space)
+    Ok(available_space as u64)
 }
 
 pub fn disk_usage(repository_path: &str) -> Result<f64, anyhow::Error> {
     let disk_used_bytes = ART_MGR.space_used(repository_path)?;
 
-    let total_allocated_size: u64 = Byte::from_str(ALLOCATED_SPACE_FOR_ARTIFACTS)
-        .unwrap()
-        .get_bytes();
+    let total_allocated_size: u64 = ALLOCATED_SPACE_FOR_ARTIFACTS as u64;
     let mut disk_usage: f64 = 0.0;
     debug!("disk_used: {}", disk_used_bytes);
     debug!("total_allocated_size: {}", total_allocated_size);

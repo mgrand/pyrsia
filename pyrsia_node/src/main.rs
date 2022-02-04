@@ -100,14 +100,6 @@ async fn main() {
     //docker node specific tx
     let tx1 = tx.clone();
 
-    // swarm specific tx,rx
-    // TODO need better handling of all these channel resources: There is better. See https://github.com/pyrsia/pyrsia/issues/317
-    let respond_rx = SWARM_PROXY.with_behaviour((), |arg| arg.1.);
-    let shared_stats = Arc::new(Mutex::new(respond_rx));
-
-    let my_stats = shared_stats.clone();
-    let tx2 = tx.clone();
-
     // We need to have two channels (to seperate the handling)
     // 1. API to main
     // 2. main to API
@@ -116,8 +108,6 @@ async fn main() {
 
     let docker_routes = make_docker_routes(b1, tx1);
     let routes = docker_routes.or(make_node_routes(
-        tx2,
-        my_stats,
         blocks_get_tx_to_main.clone(),
         blocks_get_rx_answers_from_main,
     ));

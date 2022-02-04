@@ -23,13 +23,9 @@ use tokio::sync::Mutex;
 use warp::Filter;
 
 pub fn make_node_routes(
-    tx: Sender<String>,
-    rx: Arc<Mutex<Receiver<String>>>,
     get_blocks_tx: Sender<String>,
     get_blocks_rx: Receiver<Blockchain>,
 ) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
-    let tx1 = tx.clone();
-    let rx1 = rx.clone();
     let peers = warp::path!("peers")
         .and(warp::get())
         .and(warp::path::end())
@@ -38,7 +34,7 @@ pub fn make_node_routes(
     let status = warp::path!("status")
         .and(warp::get())
         .and(warp::path::end())
-        .and_then(move || handle_get_status(tx.clone(), rx.clone()));
+        .and_then( handle_get_status);
 
     let repeatable_get_blocks_receiver = Arc::new(Mutex::new(get_blocks_rx));
     // The problem was our closure was being invoked "aka made again" so each new call needs to _take ownership_

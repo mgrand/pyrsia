@@ -426,9 +426,10 @@ impl ArtifactManager {
             }) {
                 Ok(query_id) => {
                     info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path.display());
+                    let torrent_path2 = torrent_path.to_path_buf();
                     thread::spawn(move || {
                         match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
-                            Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path.display(), query_result),
+                            Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path2.display(), query_result),
                             Err(error) => error!("Failed to receive response for adding torent to DHT: {}", error)
                         }
                     });
@@ -770,6 +771,7 @@ mod tests {
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
+    use libp2p_kad::{GetRecordOk, QueryResult};
     use stringreader::StringReader;
 
     pub use super::*;
@@ -905,15 +907,23 @@ mod tests {
 
     fn find_torrent_in_dht(am: &ArtifactManager, path: &Path) -> Result<()> {
         let multihash: Multihash = am.path_to_hash(path)?.to_multihash()?;
+        let key = Key::new(&multihash.to_bytes());
         let file_torrent = read_torrent_from_file(path);
 
         // get torrent from DHT
-        let query_id = SWARM_PROXY
-            .behaviour_mut()
-            .kademlia()
-            .get_record(&Key::new(&multihash.to_bytes()), Quorum::One);
-
-        //TODO The test to see if the torrent is in the DHT involves code that will be in the next PR.
+        let query_id = SWARM_PROXY.with_behaviour_mut(&key, |arg| {
+            let (key, behaviour) = arg;
+            behaviour.kademlia().get_record(key, Quorum::One)
+        });
+        match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
+            Ok(QueryResult::GetRecord(core::result::Result::Ok(GetRecordOk{records, ..}))) => {
+                assert!(!records.is_empty(),"there should be a found torrent record");
+                let found_record = &records[0].record;
+                assert_eq!(key, found_record.key, "Found record and original should have the same key");
+                assert_eq!(multihash.to_bytes(), found_record.value);
+            },
+            wrong => panic!("Unexpected response from request to get torrent from DHT: {:?}", wrong),
+        }
         Ok(())
     }
 

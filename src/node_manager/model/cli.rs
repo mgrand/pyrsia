@@ -20,16 +20,39 @@ use serde::{Deserialize, Serialize};
 
 pub struct Status {
     pub peers_count: usize,
+    pub incomplete_peer_count: bool,
     pub artifact_count: usize,
-    pub disk_allocated: String,
-    pub disk_usage: String,
+    pub disk_allocated: usize,
+    pub disk_usage: f64,
 }
 
 impl std::fmt::Display for Status {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "Connected Peers Count:       {}", self.peers_count)?;
+        write!(f, "Connected Peers Count:       {}", self.peers_count)?;
+        if self.incomplete_peer_count {
+            write!(
+                f,
+                " (Peer counting ran out of time before it could count all peers)"
+            );
+        }
+        writeln!(f, "");
         writeln!(f, "Artifacts Count:             {}", self.artifact_count)?;
         writeln!(f, "Total Disk Space Allocated:  {}", self.disk_allocated)?;
         write!(f, "Disk Space Used:             {}%", self.disk_usage)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt::Display;
+    use std::fmt::Write as FmtWrite;
+    use super::*;
+
+    #[test]
+    pub fn fmt_test() -> std::fmt::Result<> {
+        let status = Status { peers_count:2, incomplete_peer_count: true, artifact_count:4, disk_allocated: 1000000, disk_usage: 0.34f64};
+        let formatted = format!("{}", status);
+        assert_eq!("***THis is a Placeholder for the correct string", formatted);
+        Ok(())
     }
 }

@@ -17,11 +17,11 @@
 use super::{RegistryError, RegistryErrorCode};
 use crate::block_chain::block_chain::Blockchain;
 use crate::node_manager::{handlers::*, model::cli::Status};
+use libp2p::PeerId;
 use libp2p_kad::{GetClosestPeersError, GetClosestPeersOk, QueryId, QueryResult};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
-use libp2p::PeerId;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use warp::{http::StatusCode, Rejection, Reply};
@@ -30,9 +30,8 @@ const GET_CLOSEST_PEERS_TIMEOUT_SECONDS: u64 = 2;
 
 pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
     debug!("requesting closest peers");
-    let query_id: QueryId = SWARM_PROXY.with_behaviour_mut((), |arg| {
-        arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID)
-    });
+    let query_id: QueryId = SWARM_PROXY
+        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
     match MESSAGE_DELIVERY.receive(
         query_id,
         Duration::from_secs(GET_CLOSEST_PEERS_TIMEOUT_SECONDS),
@@ -70,7 +69,7 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
                 .unwrap())
         }
         Err(error) => {
-            error!("Error getting closest peers: {}", error);
+            error!("Error getting closest peers response: {}", error);
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -94,23 +93,41 @@ fn peers_as_json_string(peers: Vec<PeerId>) -> String {
     string
 }
 
-pub async fn handle_get_status(
-    tx: Sender<String>,
-    rx: Arc<Mutex<Receiver<String>>>,
-) -> Result<impl Reply, Rejection> {
-    match tx.send(String::from("peers")).await {
-        Ok(_) => debug!("request for peers sent"),
-        Err(_) => error!("failed to send stdin input"),
-    }
-
-    let peers = rx.lock().await.recv().await.unwrap();
-    debug!("peers empty: {:?}", peers.is_empty());
-    let mut peers_total = 0;
-    if !peers.is_empty() {
-        let res: Vec<String> = peers.split(',').map(|s| s.to_string()).collect();
-        debug!("peers count: {}", res.len());
-        peers_total = res.len();
-    }
+pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
+    let mut incomplete_peer_count = false;
+    let query_id = SWARM_PROXY
+        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
+    let peers_count = match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
+        Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
+            peers,
+            ..
+        }))) => peers.len(),
+        Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
+            GetClosestPeersError::Timeout { peers, .. },
+        ))) => {
+            incomplete_peer_count = true;
+            peers.len()
+        }
+        Ok(other) => {
+            error!(
+                "Expected a QueryResult::GetClosetsPeers, but got {:?}",
+                other
+            );
+            return Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
+                .unwrap());
+        }
+        Err(error) => {
+            error!("Error getting closest peers response: {}", error);
+            return Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
+                .unwrap());
+        }
+    };
 
     let art_count_result = get_arts_count();
     if art_count_result.is_err() {
@@ -128,9 +145,10 @@ pub async fn handle_get_status(
 
     let status = Status {
         artifact_count: art_count_result.unwrap(),
-        peers_count: peers_total,
-        disk_allocated: String::from(ALLOCATED_SPACE_FOR_ARTIFACTS),
-        disk_usage: format!("{:.4}", disk_space_result.unwrap()),
+        incomplete_peer_count,
+        peers_count,
+        disk_allocated: ALLOCATED_SPACE_FOR_ARTIFACTS,
+        disk_usage: disk_space_result.unwrap(),
     };
 
     let ser_status = serde_json::to_string(&status).unwrap();

@@ -33,9 +33,9 @@ use libp2p::{
 };
 use libp2p_kad::store::MemoryStore;
 use libp2p_kad::Kademlia;
+use log::Level::Debug;
 use log::{debug, error, info, log_enabled, warn};
 use std::collections::HashSet;
-use log::Level::Debug;
 
 // We create a custom network behaviour that combines floodsub and mDNS.
 // The derive generates a delegating `NetworkBehaviour` impl which in turn
@@ -97,7 +97,8 @@ impl MyBehaviour {
 
     pub fn advertise_blob(&mut self, hash: String, value: Vec<u8>) -> Result<QueryId, Error> {
         let num = std::num::NonZeroUsize::new(2).ok_or(Error::ValueTooLarge)?;
-        self.kademlia.put_record(Record::new(Key::new(&hash), value), Quorum::N(num))
+        self.kademlia
+            .put_record(Record::new(Key::new(&hash), value), Quorum::N(num))
     }
 
     fn log_kademlia_event(&mut self, message: &KademliaEvent) {
@@ -113,10 +114,10 @@ impl MyBehaviour {
                     if log_enabled!(Debug) {
                         for peer in ok.providers.clone() {
                             debug!(target: "pyrsia_node_comms",
-                        "Peer {:?} provides key {:?}",
-                        peer,
-                        std::str::from_utf8(ok.key.as_ref()).unwrap()
-                        );
+                            "Peer {:?} provides key {:?}",
+                            peer,
+                            std::str::from_utf8(ok.key.as_ref()).unwrap()
+                            );
                         }
                     }
                 }
@@ -134,10 +135,10 @@ impl MyBehaviour {
                         } in ok.records.clone()
                         {
                             debug!(target: "pyrsia_node_comms",
-                            "Got record {:?} {:?}",
-                            std::str::from_utf8(key.as_ref()).unwrap(),
-                            std::str::from_utf8(&value).unwrap(),
-                        );
+                                "Got record {:?} {:?}",
+                                std::str::from_utf8(key.as_ref()).unwrap(),
+                                std::str::from_utf8(&value).unwrap(),
+                            );
                         }
                     }
                 }
@@ -250,7 +251,7 @@ impl NetworkBehaviourEventProcess<KademliaEvent> for MyBehaviour {
         debug!("Received event: {:?}", &event);
         self.log_kademlia_event(&event);
         if let KademliaEvent::OutboundQueryCompleted { id, result, .. } = event {
-                MESSAGE_DELIVERY.deliver(id, result);
+            MESSAGE_DELIVERY.deliver(id, result);
         };
     }
 }
@@ -281,7 +282,10 @@ mod tests {
     #[test]
     pub fn inject_kademlia_event() {
         // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
-        let query_id = SWARM_PROXY.behaviour_mut((),|b| b.1.kademlia().get_record(&Key::new(&LOCAL_PEER_ID.to_bytes()), Quorum::One));
+        let query_id = SWARM_PROXY.with_behaviour_mut((), |b| {
+            b.1.kademlia()
+                .get_record(&Key::new(&LOCAL_PEER_ID.to_bytes()), Quorum::One)
+        });
         // Expect that Kademlia will call inject_event
         MESSAGE_DELIVERY
             .receive(query_id, Duration::from_secs(2))
