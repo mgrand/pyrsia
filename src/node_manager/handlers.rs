@@ -32,6 +32,7 @@ use std::io::{BufReader, Read};
 use std::panic::UnwindSafe;
 use std::str;
 use std::{fs, panic};
+use std::time::Duration;
 use libp2p::floodsub::Topic;
 use libp2p_kad::{QueryId, QueryResult};
 use crate::network;
@@ -46,6 +47,7 @@ lazy_static! {
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
     pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_conversation");
+    pub static ref KADEMLIA_RESPONSE_TIMOUT: Duration = Duration::from_secs(2);
 
     pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> = SwarmThreadSafeProxy::new(network::swarm::default().expect("Failed to create swarm"));
     pub static ref ART_MGR: ArtifactManager = {
