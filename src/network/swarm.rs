@@ -34,7 +34,6 @@ use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::swarm::NetworkBehaviour;
 use log::error;
-use tokio::sync::mpsc;
 
 /// This is the normal way that a Pyrsia node will create a swarm
 pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
@@ -72,15 +71,12 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
             return Err(())
         }
     };
-    let (response_sender, response_receiver) = mpsc::channel(32);
     let transport: TcpTokioTransport = transport::new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
     let mut behaviour = MyBehaviour::new(
         gossipsub,
         Floodsub::new(LOCAL_PEER_ID.clone()),
         kademlia,
         mdns,
-        response_sender,
-        response_receiver,
     );
     behaviour.floodsub_mut().subscribe(FLOODSUB_TOPIC.clone());
     new(transport, behaviour)

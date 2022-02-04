@@ -17,10 +17,11 @@
 use super::{RegistryError, RegistryErrorCode};
 use crate::block_chain::block_chain::Blockchain;
 use crate::node_manager::{handlers::*, model::cli::Status};
-use libp2p_kad::{kbucket, GetClosestPeersError, GetClosestPeersOk, QueryId, QueryResult};
+use libp2p_kad::{GetClosestPeersError, GetClosestPeersOk, QueryId, QueryResult};
 use log::{debug, error, info, warn};
 use std::sync::Arc;
 use std::time::Duration;
+use libp2p::PeerId;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
 use warp::{http::StatusCode, Rejection, Reply};
@@ -42,9 +43,9 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
         }))) => {
             info!("Got peers: {:?}", peers);
             Ok(warp::http::response::Builder::new()
-                .header("Content-Type", "application/octet-stream")
+                .header("Content-Type", "application/json")
                 .status(StatusCode::OK)
-                .body(peers)
+                .body(peers_as_json_string(peers))
                 .unwrap())
         }
         Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
@@ -52,9 +53,9 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
         ))) => {
             warn!("Got some peers but timed out: {:?}", peers);
             Ok(warp::http::response::Builder::new()
-                .header("Content-Type", "application/octet-stream")
+                .header("Content-Type", "application/json")
                 .status(StatusCode::PARTIAL_CONTENT)
-                .body(peers)
+                .body(peers_as_json_string(peers))
                 .unwrap())
         }
         Ok(other) => {
@@ -65,7 +66,7 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap())
         }
         Err(error) => {
@@ -73,10 +74,24 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str())
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap())
         }
     }
+}
+
+fn peers_as_json_string(peers: Vec<PeerId>) -> String {
+    let mut string = String::from("[");
+    if !peers.is_empty() {
+        for peer in peers {
+            string.push('"');
+            string.push_str(&peer.to_base58());
+            string.push_str("\",")
+        }
+        string.pop();
+    }
+    string.push(']');
+    string
 }
 
 pub async fn handle_get_status(

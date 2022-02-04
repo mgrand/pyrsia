@@ -420,7 +420,7 @@ impl ArtifactManager {
 
         fn put_record_in_dht(torrent_path: &Path, dht_record: Record) -> Result<()> {
             // TODO We should look at configuring a numeric quorum size.
-            match SWARM_PROXY.behaviour_mut(dht_record,|arg|{
+            match SWARM_PROXY.with_behaviour_mut(dht_record,|arg|{
                 let (dht_record, behaviour) = arg;
                 behaviour.kademlia().put_record(dht_record, Quorum::Majority)
             }) {
