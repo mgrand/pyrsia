@@ -929,7 +929,7 @@ mod tests {
                     "Found record and original should have the same key"
                 );
                 let mut file_torrent_bytes: Vec<u8> = Vec::new();
-                file_torrent.write_into_file(file_torrent_bytes);
+                file_torrent.write_into(&mut file_torrent_bytes)?;
                 assert_eq!(file_torrent_bytes, found_record.value);
             }
             wrong => panic!(
