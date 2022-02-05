@@ -16,24 +16,24 @@
 
 use super::behavior::MyBehaviour;
 use super::transport::TcpTokioTransport;
-use libp2p::{gossipsub, PeerId};
 use libp2p::gossipsub::MessageId;
 use libp2p::gossipsub::{GossipsubMessage, IdentTopic, MessageAuthenticity, ValidationMode};
 use libp2p::{floodsub::Floodsub, mdns::Mdns, swarm::SwarmBuilder, Swarm};
+use libp2p::{gossipsub, PeerId};
 use std::collections::hash_map::DefaultHasher;
 
 use crate::network::transport;
 use crate::node_api::LOCAL_KEY;
 use crate::node_manager::handlers::{FLOODSUB_TOPIC, LOCAL_PEER_ID};
-use libp2p_kad::store::MemoryStore;
-use libp2p_kad::Kademlia;
-use std::hash::{Hash, Hasher};
-use std::time::Duration;
 use futures::executor::block_on;
 use libp2p::core::muxing::StreamMuxerBox;
 use libp2p::core::transport::Boxed;
 use libp2p::swarm::NetworkBehaviour;
+use libp2p_kad::store::MemoryStore;
+use libp2p_kad::Kademlia;
 use log::error;
+use std::hash::{Hash, Hasher};
+use std::time::Duration;
 
 /// This is the normal way that a Pyrsia node will create a swarm
 pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
@@ -57,7 +57,7 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
         MessageAuthenticity::Signed(LOCAL_KEY.clone()),
         gossipsub_config,
     )
-        .expect("Correct configuration");
+    .expect("Correct configuration");
 
     // subscribes to our gossip topic
     let gossip_topic = IdentTopic::new("pyrsia_file_share_topic");
@@ -68,7 +68,7 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
         Ok(mdns) => mdns,
         Err(error) => {
             error!("Error setting up mdns: {}", error);
-            return Err(())
+            return Err(());
         }
     };
     let transport: TcpTokioTransport = transport::new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
@@ -83,7 +83,10 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
 }
 
 /// This can be used by unit tests to use alternate transport and behavior
-pub fn new<T: NetworkBehaviour>(transport: Boxed<(PeerId, StreamMuxerBox)>, behaviour: T) -> Result<Swarm<T>, ()> {
+pub fn new<T: NetworkBehaviour>(
+    transport: Boxed<(PeerId, StreamMuxerBox)>,
+    behaviour: T,
+) -> Result<Swarm<T>, ()> {
     let swarm = SwarmBuilder::new(transport, behaviour, *LOCAL_PEER_ID)
         // We want the connection background tasks to be spawned
         // onto the tokio runtime.
@@ -96,9 +99,9 @@ pub fn new<T: NetworkBehaviour>(transport: Boxed<(PeerId, StreamMuxerBox)>, beha
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use libp2p::identity;
     use libp2p::swarm::DummyBehaviour;
-    use super::*;
 
     #[test]
     pub fn new_test() {
@@ -107,6 +110,9 @@ mod tests {
         let transport = block_on(libp2p::development_transport(local_key)).unwrap();
         let behaviour = DummyBehaviour::default();
         let swarm = new(transport, behaviour.clone()).unwrap();
-        assert!(std::ptr::eq(&behaviour, swarm.behaviour()), "The swarm should have the same behavior used to construct it");
+        assert!(
+            std::ptr::eq(&behaviour, swarm.behaviour()),
+            "The swarm should have the same behavior used to construct it"
+        );
     }
 }

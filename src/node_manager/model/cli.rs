@@ -44,13 +44,19 @@ impl std::fmt::Display for Status {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fmt::Display;
     use std::fmt::Write as FmtWrite;
-    use super::*;
 
     #[test]
-    pub fn fmt_test() -> std::fmt::Result<> {
-        let status = Status { peers_count:2, incomplete_peer_count: true, artifact_count:4, disk_allocated: 1000000, disk_usage: 0.34f64};
+    pub fn fmt_test() -> std::fmt::Result {
+        let status = Status {
+            peers_count: 2,
+            incomplete_peer_count: true,
+            artifact_count: 4,
+            disk_allocated: 1000000,
+            disk_usage: 0.34f64,
+        };
         let formatted = format!("{}", status);
         assert_eq!("***THis is a Placeholder for the correct string", formatted);
         Ok(())

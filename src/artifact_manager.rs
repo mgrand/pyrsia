@@ -33,13 +33,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::ffi::{OsStr, OsString};
 use std::fmt::{Display, Formatter};
-use std::{fs, thread};
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufWriter, Read, Write};
 use std::path;
 use std::path::Path;
 use std::str::FromStr;
+use std::{fs, thread};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString};
 use walkdir::{DirEntry, WalkDir};
@@ -763,6 +763,7 @@ mod tests {
     use anyhow::{anyhow, Context};
     use env_logger::Target;
     use libp2p_kad::record::Key;
+    use libp2p_kad::{GetRecordOk, QueryResult};
     use log::{info, LevelFilter};
     use num_traits::cast::AsPrimitive;
     use rand::{Rng, RngCore};
@@ -771,7 +772,6 @@ mod tests {
     use std::io::Read;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
-    use libp2p_kad::{GetRecordOk, QueryResult};
     use stringreader::StringReader;
 
     pub use super::*;
@@ -916,13 +916,24 @@ mod tests {
             behaviour.kademlia().get_record(key, Quorum::One)
         });
         match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
-            Ok(QueryResult::GetRecord(core::result::Result::Ok(GetRecordOk{records, ..}))) => {
-                assert!(!records.is_empty(),"there should be a found torrent record");
+            Ok(QueryResult::GetRecord(core::result::Result::Ok(GetRecordOk {
+                records, ..
+            }))) => {
+                assert!(
+                    !records.is_empty(),
+                    "there should be a found torrent record"
+                );
                 let found_record = &records[0].record;
-                assert_eq!(key, found_record.key, "Found record and original should have the same key");
+                assert_eq!(
+                    key, found_record.key,
+                    "Found record and original should have the same key"
+                );
                 assert_eq!(multihash.to_bytes(), found_record.value);
-            },
-            wrong => panic!("Unexpected response from request to get torrent from DHT: {:?}", wrong),
+            }
+            wrong => panic!(
+                "Unexpected response from request to get torrent from DHT: {:?}",
+                wrong
+            ),
         }
         Ok(())
     }

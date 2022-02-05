@@ -93,21 +93,21 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         (*self.ref_cell()).borrow().is_connected(peer_id)
     }
 
-    pub fn with_behaviour<U,V>(&self, value: V, f: fn ((V,&T)) -> U) -> U {
+    pub fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
         f((value, (*self.ref_cell()).borrow().behaviour()))
     }
 
-    pub fn with_behaviour_mut<U,V>(&self, value: V, f: fn((V,&mut T)) -> U) -> U {
-       f((value, (*self.ref_cell()).borrow_mut().behaviour_mut()))
+    pub fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
+        f((value, (*self.ref_cell()).borrow_mut().behaviour_mut()))
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use futures::executor::block_on;
     use libp2p::identity;
     use libp2p::swarm::DummyBehaviour;
-    use super::*;
 
     fn swarm_proxy_for_test() -> SwarmThreadSafeProxy<DummyBehaviour> {
         let local_key = identity::Keypair::generate_ed25519();

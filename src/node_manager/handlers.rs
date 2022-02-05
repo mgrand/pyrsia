@@ -20,35 +20,36 @@ use super::HashAlgorithm;
 use super::Hash;
 
 use crate::metadata_manager::metadata::Metadata;
-use crate::network::swarm_thread_safe_proxy::SwarmThreadSafeProxy;
+use crate::network;
+use crate::network::behavior::MyBehaviour;
 use crate::network::message_delivery::MessageDelivery;
+use crate::network::swarm_thread_safe_proxy::SwarmThreadSafeProxy;
 use anyhow::{Context, Result};
 use lazy_static::lazy_static;
+use libp2p::floodsub::Topic;
 use libp2p::{identity, PeerId};
+use libp2p_kad::{QueryId, QueryResult};
 use log::{debug, error, info};
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::panic::UnwindSafe;
 use std::str;
-use std::{fs, panic};
 use std::time::Duration;
-use libp2p::floodsub::Topic;
-use libp2p_kad::{QueryId, QueryResult};
-use crate::network;
-use crate::network::behavior::MyBehaviour;
+use std::{fs, panic};
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
 //TODO: read from CLI config file
 pub const ALLOCATED_SPACE_FOR_ARTIFACTS: usize = 10840000;
 
 lazy_static! {
-    pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> = MessageDelivery::default();
+    pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> =
+        MessageDelivery::default();
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
     pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_conversation");
     pub static ref KADEMLIA_RESPONSE_TIMOUT: Duration = Duration::from_secs(2);
-
-    pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> = SwarmThreadSafeProxy::new(network::swarm::default().expect("Failed to create swarm"));
+    pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> =
+        SwarmThreadSafeProxy::new(network::swarm::default().expect("Failed to create swarm"));
     pub static ref ART_MGR: ArtifactManager = {
         log_static_initialization_failure(
             "Artifact Manager Directory",
@@ -270,5 +271,7 @@ mod tests {
     }
 
     #[test]
-    pub fn finish() {panic!("!")}
+    pub fn finish() {
+        panic!("!")
+    }
 }

@@ -34,7 +34,7 @@ pub fn make_node_routes(
     let status = warp::path!("status")
         .and(warp::get())
         .and(warp::path::end())
-        .and_then( handle_get_status);
+        .and_then(handle_get_status);
 
     let repeatable_get_blocks_receiver = Arc::new(Mutex::new(get_blocks_rx));
     // The problem was our closure was being invoked "aka made again" so each new call needs to _take ownership_

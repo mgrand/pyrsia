@@ -44,12 +44,12 @@ use libp2p::{
     Multiaddr, PeerId,
 };
 use log::{debug, error, info};
+use std::borrow::Borrow;
 use std::{
     env,
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
 };
-use std::borrow::Borrow;
 use tokio::{
     io::{self, AsyncBufReadExt},
     sync::{mpsc, Mutex, MutexGuard},

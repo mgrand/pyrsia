@@ -21,11 +21,11 @@ extern crate std;
 
 use anyhow::{bail, Result};
 use dashmap::DashMap;
+use log::debug;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
-use log::debug;
 
 const INITIAL_MAP_CAPACITY: usize = 23;
 
