@@ -33,9 +33,9 @@ impl std::fmt::Display for Status {
             write!(
                 f,
                 " (Peer counting ran out of time before it could count all peers)"
-            );
+            )?;
         }
-        writeln!(f, "");
+        writeln!(f, "")?;
         writeln!(f, "Artifacts Count:             {}", self.artifact_count)?;
         writeln!(f, "Total Disk Space Allocated:  {}", self.disk_allocated)?;
         write!(f, "Disk Space Used:             {}%", self.disk_usage)
@@ -45,8 +45,6 @@ impl std::fmt::Display for Status {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fmt::Display;
-    use std::fmt::Write as FmtWrite;
 
     #[test]
     pub fn fmt_test() -> std::fmt::Result {

@@ -928,7 +928,9 @@ mod tests {
                     key, found_record.key,
                     "Found record and original should have the same key"
                 );
-                assert_eq!(multihash.to_bytes(), found_record.value);
+                let mut file_torrent_bytes: Vec<u8> = Vec::new();
+                file_torrent.write_into_file(file_torrent_bytes);
+                assert_eq!(file_torrent_bytes, found_record.value);
             }
             wrong => panic!(
                 "Unexpected response from request to get torrent from DHT: {:?}",

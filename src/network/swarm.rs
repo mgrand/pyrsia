@@ -106,7 +106,6 @@ mod tests {
     #[test]
     pub fn new_test() {
         let local_key = identity::Keypair::generate_ed25519();
-        let local_peer_id = PeerId::from(local_key.public());
         let transport = block_on(libp2p::development_transport(local_key)).unwrap();
         let behaviour = DummyBehaviour::default();
         let swarm = new(transport, behaviour.clone()).unwrap();
