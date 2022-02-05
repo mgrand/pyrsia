@@ -77,10 +77,10 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
                 Ok(msg)
             }
             Some(MessageEnvelope { message: None, .. }) => {
-                bail!("Received message envelope with no message")
+                bail!("Received message envelope with no message for {:?}", id)
             }
             None => {
-                Self::wait_for_delivery(arc, timeout_duration)?;
+                Self::wait_for_delivery(arc, timeout_duration, &id)?;
                 match self.id_message_map.remove(&id) {
                     Some((
                         _,
@@ -89,9 +89,9 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
                         },
                     )) => Ok(msg),
                     Some((_, MessageEnvelope { message: None, .. })) => {
-                        bail!("Received message envelope with no message")
+                        bail!("Received message envelope with no message for {:?}", id)
                     }
-                    None => bail!("Missing message envelope"),
+                    None => bail!("Missing message envelope for {:?}", id),
                 }
             }
         }
@@ -100,17 +100,18 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
     fn wait_for_delivery(
         arc: Arc<(Mutex<bool>, Condvar)>,
         timeout_duration: Duration,
+        id: &I,
     ) -> Result<()> {
         let (mutex, cvar) = &*arc;
         let mut guard = match mutex.lock() {
             Ok(guard) => guard,
-            Err(error) => bail!("Error unlocking mutex for receive: {}", error),
+            Err(error) => bail!("Error for {:?} unlocking mutex for receive: {}", id,  error),
         };
         while !*guard {
             guard = match cvar.wait_timeout(guard, timeout_duration) {
                 Ok((guard, wait_timeout_result)) => {
                     if wait_timeout_result.timed_out() {
-                        bail!("MessageDelivery::receive timed out");
+                        bail!("MessageDelivery::receive timed out for {:?}", id);
                     } else {
                         guard
                     }

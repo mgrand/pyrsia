@@ -929,7 +929,13 @@ mod tests {
                     "Found record and original should have the same key"
                 );
                 let mut file_torrent_bytes: Vec<u8> = Vec::new();
-                file_torrent.write_into(&mut file_torrent_bytes)?;
+                if let Err(error) = file_torrent.write_into(&mut file_torrent_bytes) {
+                    bail!(
+                        "Error writing torrent contents to Vec: {}\nTorrent path: {}",
+                        error,
+                        path.display()
+                    )
+                }
                 assert_eq!(file_torrent_bytes, found_record.value);
             }
             wrong => panic!(
