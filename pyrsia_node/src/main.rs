@@ -145,6 +145,7 @@ async fn main() {
                 },
 
                 event = swarm.select_next_some() =>  {
+                    !debug!("Received swarm event {:?}", event);
                     if let SwarmEvent::NewListenAddr { address, .. } = event {
                         info!("Listening on {:?}", address);
                     }
