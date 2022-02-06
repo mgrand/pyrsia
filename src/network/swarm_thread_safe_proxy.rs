@@ -17,6 +17,7 @@ extern crate libp2p;
 extern crate libp2p_kad;
 extern crate std;
 
+use std::borrow::{Borrow, BorrowMut};
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
@@ -25,22 +26,68 @@ use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
 use std::cell::RefCell;
 use std::io::Error;
 use std::sync::{Mutex, MutexGuard};
+use std::thread;
+use std::thread::Thread;
+use log::error;
+
+struct PollingLoopControl {
+    polling_loop_thread: Option<Thread>,
+    shutdown_requested: bool,
+}
 
 /// A thread safe proxy to insure that only one thread at a time is making a call to the swarm. It uses internal mutability so that the caller of this struct's methods can use an immutable reference.
 pub struct SwarmThreadSafeProxy<T: NetworkBehaviour> {
     mutex: Mutex<RefCell<Swarm<T>>>,
+    polling_loop_control: Mutex<RefCell<Option<PollingLoopControl>>>,
 }
 
 impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     pub fn new(swarm: Swarm<T>) -> SwarmThreadSafeProxy<T> {
         SwarmThreadSafeProxy {
             mutex: Mutex::new(RefCell::new(swarm)),
+            polling_loop_control: Mutex::new(RefCell::new(None))
         }
     }
 
     /// return true if the mutex is in a poisoned state due to a previous panic.
     pub fn is_poisoned(&self) -> bool {
         self.mutex.is_poisoned()
+    }
+
+    /// Run the swarm polling loop using the caller's thread, returning when the polling loop is stopped.
+    /// If another thread is already running the loop, logs an error and returns immediately.
+    ///
+    /// This is intended to be called from the main thread.
+    pub fn start_polling_loop_using_my_thread(&self) {
+        {
+            let mut cell = self.polling_loop_control.lock().expect("If the mutex is broken, panic").borrow_mut();
+            if (**cell).get_mut().is_some() {
+                return error!("start_polling_loop_using_my_thread was called while the polling loop was already running");
+            }
+            cell.replace(Some(PollingLoopControl { polling_loop_thread: Some(thread::current()), shutdown_requested: false }));
+        }
+        while !self.shutdown_requested() {
+            polling_logic();
+        }
+    }
+
+    fn shutdown_requested(&self) -> bool {
+        match *(**self.polling_loop_control.lock().expect("mutex is OK").borrow()).borrow() {
+            Some(PollingLoopControl{shutdown_requested: flag, ..}) => flag,
+            None => true
+        }
+    }
+
+    /// If the swarm polling loop is not running spawn a thread to run it. This always returns immediately.
+    ///
+    /// This is intented to be called from unit tests.
+    pub fn start_polling_loop_using_other_thread(&self) {
+        todo!()
+    }
+
+    /// Request the polling loop to stop. This sets a flag preventing more polling loop iterations. It does not immediately stop or interrupt anything.
+    pub fn stop_polling_loop(&self) {
+        todo!()
     }
 
     fn ref_cell(&self) -> MutexGuard<RefCell<Swarm<T>>> {
@@ -100,6 +147,10 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     pub fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
         f((value, (*self.ref_cell()).borrow_mut().behaviour_mut()))
     }
+}
+
+fn polling_logic() {
+
 }
 
 #[cfg(test)]
