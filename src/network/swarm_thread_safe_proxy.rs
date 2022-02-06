@@ -17,35 +17,44 @@ extern crate libp2p;
 extern crate libp2p_kad;
 extern crate std;
 
-use std::borrow::{Borrow, BorrowMut};
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
+use log::{debug, error};
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::io::Error;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
-use std::thread::Thread;
-use log::error;
+use std::thread::ThreadId;
 
 struct PollingLoopControl {
-    polling_loop_thread: Option<Thread>,
+    polling_loop_thread: Option<ThreadId>,
     shutdown_requested: bool,
+}
+
+impl PollingLoopControl {
+    fn new (thread_id: ThreadId) -> PollingLoopControl {
+        PollingLoopControl {
+            polling_loop_thread: Some(thread_id),
+            shutdown_requested: false,
+        }
+    }
 }
 
 /// A thread safe proxy to insure that only one thread at a time is making a call to the swarm. It uses internal mutability so that the caller of this struct's methods can use an immutable reference.
 pub struct SwarmThreadSafeProxy<T: NetworkBehaviour> {
     mutex: Mutex<RefCell<Swarm<T>>>,
-    polling_loop_control: Mutex<RefCell<Option<PollingLoopControl>>>,
+    polling_loop_control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>,
 }
 
 impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     pub fn new(swarm: Swarm<T>) -> SwarmThreadSafeProxy<T> {
         SwarmThreadSafeProxy {
             mutex: Mutex::new(RefCell::new(swarm)),
-            polling_loop_control: Mutex::new(RefCell::new(None))
+            polling_loop_control: Arc::new(Mutex::new(RefCell::new(None))),
         }
     }
 
@@ -60,29 +69,40 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     /// This is intended to be called from the main thread.
     pub fn start_polling_loop_using_my_thread(&self) {
         {
-            let mut cell = self.polling_loop_control.lock().expect("If the mutex is broken, panic").borrow_mut();
+            let mut guard = self
+                .polling_loop_control
+                .lock()
+                .expect("If the mutex is broken, panic");
+            let cell = guard.borrow_mut();
             if (**cell).get_mut().is_some() {
                 return error!("start_polling_loop_using_my_thread was called while the polling loop was already running");
             }
-            cell.replace(Some(PollingLoopControl { polling_loop_thread: Some(thread::current()), shutdown_requested: false }));
+            cell.replace(Some(PollingLoopControl::new(thread::current().id())));
         }
-        while !self.shutdown_requested() {
-            polling_logic();
-        }
-    }
-
-    fn shutdown_requested(&self) -> bool {
-        match *(**self.polling_loop_control.lock().expect("mutex is OK").borrow()).borrow() {
-            Some(PollingLoopControl{shutdown_requested: flag, ..}) => flag,
-            None => true
-        }
+        run_polling_loop(self.polling_loop_control.clone());
     }
 
     /// If the swarm polling loop is not running spawn a thread to run it. This always returns immediately.
     ///
-    /// This is intented to be called from unit tests.
+    /// This is intended to be called from unit tests.
     pub fn start_polling_loop_using_other_thread(&self) {
-        todo!()
+        let mut guard = self
+            .polling_loop_control
+            .lock()
+            .expect("If the mutex is broken, panic");
+        let cell = guard.borrow_mut();
+        if (**cell).borrow().is_some() {
+            return debug!("start_polling_loop_using_other_thread was called while the polling loop was already running");
+        }
+        let control = self.polling_loop_control.clone();
+        let polling_thread_id = thread::spawn(move || {
+            run_polling_loop(control);
+        })
+        .thread().id();
+        cell.replace(Some(PollingLoopControl {
+            polling_loop_thread: Some(polling_thread_id),
+            shutdown_requested: false,
+        }));
     }
 
     /// Request the polling loop to stop. This sets a flag preventing more polling loop iterations. It does not immediately stop or interrupt anything.
@@ -100,8 +120,8 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         (*self.ref_cell()).borrow().network_info()
     }
 
-    pub fn listen_on(&self, addr: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
-        (*self.ref_cell()).borrow_mut().listen_on(addr)
+    pub fn listen_on(&self, address: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
+        (*self.ref_cell()).borrow_mut().listen_on(address)
     }
 
     pub fn remove_listener(&self, id: ListenerId) -> bool {
@@ -149,8 +169,34 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     }
 }
 
-fn polling_logic() {
+/// Return true if there is a pending request to shut down the polling loop.
+fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) -> bool {
+    match *(control.lock().expect("mutex is OK").borrow()) {
+        Some(PollingLoopControl {
+            shutdown_requested: flag,
+            ..
+        }) => flag,
+        None => true,
+    }
+}
 
+fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
+    debug!("Running polling loop in thread {:?}", control.lock().expect("If the mutex is broken, panic").borrow().as_ref().unwrap().polling_loop_thread.unwrap());
+    while !shutdown_requested(&control) {
+        polling_logic();
+    }
+    cleanup_for_polling_loop_exit(&control);
+}
+
+fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
+    let mut guard = control.lock().expect("If the mutex is broken, panic");
+    let cell = guard.borrow_mut();
+    let old_control = cell.replace(None);
+    debug!("Thread exited polling loop: {:?}", old_control.as_ref().unwrap().polling_loop_thread.unwrap());
+}
+
+fn polling_logic() {
+    todo!("the logic for each iteration of the polling loop goes here.")
 }
 
 #[cfg(test)]
