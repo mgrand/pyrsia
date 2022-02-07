@@ -36,7 +36,7 @@ struct PollingLoopControl {
 }
 
 impl PollingLoopControl {
-    fn new (thread_id: ThreadId) -> PollingLoopControl {
+    fn new(thread_id: ThreadId) -> PollingLoopControl {
         PollingLoopControl {
             polling_loop_thread: Some(thread_id),
             shutdown_requested: false,
@@ -98,7 +98,8 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         let polling_thread_id = thread::spawn(move || {
             run_polling_loop(control);
         })
-        .thread().id();
+        .thread()
+        .id();
         cell.replace(Some(PollingLoopControl {
             polling_loop_thread: Some(polling_thread_id),
             shutdown_requested: false,
@@ -133,7 +134,7 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     }
 
     pub fn local_peer_id(&self) -> PeerId {
-        (*self.ref_cell()).borrow().local_peer_id().clone()
+        *(*self.ref_cell()).borrow().local_peer_id()
     }
 
     pub fn add_external_addresses(&self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
@@ -152,6 +153,7 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         (*self.ref_cell()).borrow_mut().unban_peer_id(peer_id)
     }
 
+    #[allow(clippy::result_unit_err)] // A result that returns a unit error is a requirement inherited from the underlying method.
     pub fn disconnect_peer_id(&self, peer_id: PeerId) -> Result<(), ()> {
         (*self.ref_cell()).borrow_mut().disconnect_peer_id(peer_id)
     }
@@ -181,7 +183,17 @@ fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>)
 }
 
 fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
-    debug!("Running polling loop in thread {:?}", control.lock().expect("If the mutex is broken, panic").borrow().as_ref().unwrap().polling_loop_thread.unwrap());
+    debug!(
+        "Running polling loop in thread {:?}",
+        control
+            .lock()
+            .expect("If the mutex is broken, panic")
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .polling_loop_thread
+            .unwrap()
+    );
     while !shutdown_requested(&control) {
         polling_logic();
     }
@@ -192,7 +204,10 @@ fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopC
     let mut guard = control.lock().expect("If the mutex is broken, panic");
     let cell = guard.borrow_mut();
     let old_control = cell.replace(None);
-    debug!("Thread exited polling loop: {:?}", old_control.as_ref().unwrap().polling_loop_thread.unwrap());
+    debug!(
+        "Thread exited polling loop: {:?}",
+        old_control.as_ref().unwrap().polling_loop_thread.unwrap()
+    );
 }
 
 fn polling_logic() {

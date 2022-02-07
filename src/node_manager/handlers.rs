@@ -49,7 +49,7 @@ lazy_static! {
     pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_conversation");
     pub static ref KADEMLIA_RESPONSE_TIMOUT: Duration = Duration::from_secs(2);
     pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> =
-        SwarmThreadSafeProxy::new(network::swarm::default().expect("Failed to create swarm"));
+        SwarmThreadSafeProxy::new(network::swarm::default());
     pub static ref ART_MGR: ArtifactManager = {
         log_static_initialization_failure(
             "Artifact Manager Directory",

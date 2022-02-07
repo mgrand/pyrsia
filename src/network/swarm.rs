@@ -31,12 +31,11 @@ use libp2p::core::transport::Boxed;
 use libp2p::swarm::NetworkBehaviour;
 use libp2p_kad::store::MemoryStore;
 use libp2p_kad::Kademlia;
-use log::error;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
 
 /// This is the normal way that a Pyrsia node will create a swarm
-pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
+pub fn default() -> Swarm<MyBehaviour> {
     // To content-address message, we can take the hash of message and use it as an ID.
     let message_id_fn = |message: &GossipsubMessage| {
         let mut s = DefaultHasher::new();
@@ -67,17 +66,11 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
     let mdns = match block_on(Mdns::new(Default::default())) {
         Ok(mdns) => mdns,
         Err(error) => {
-            error!("Error setting up mdns: {}", error);
-            return Err(());
+            panic!("Error setting up mdns: {}", error)
         }
     };
     let transport: TcpTokioTransport = transport::new_tokio_tcp_transport(&*LOCAL_KEY); // Create a tokio-based TCP transport using noise for authenticated
-    let mut behaviour = MyBehaviour::new(
-        gossipsub,
-        Floodsub::new(LOCAL_PEER_ID.clone()),
-        kademlia,
-        mdns,
-    );
+    let mut behaviour = MyBehaviour::new(gossipsub, Floodsub::new(*LOCAL_PEER_ID), kademlia, mdns);
     behaviour.floodsub_mut().subscribe(FLOODSUB_TOPIC.clone());
     new(transport, behaviour)
 }
@@ -86,15 +79,14 @@ pub fn default() -> anyhow::Result<Swarm<MyBehaviour>, ()> {
 pub fn new<T: NetworkBehaviour>(
     transport: Boxed<(PeerId, StreamMuxerBox)>,
     behaviour: T,
-) -> Result<Swarm<T>, ()> {
-    let swarm = SwarmBuilder::new(transport, behaviour, *LOCAL_PEER_ID)
+) -> Swarm<T> {
+    SwarmBuilder::new(transport, behaviour, *LOCAL_PEER_ID)
         // We want the connection background tasks to be spawned
         // onto the tokio runtime.
         .executor(Box::new(|fut| {
             tokio::spawn(fut);
         }))
-        .build();
-    Ok(swarm)
+        .build()
 }
 
 #[cfg(test)]
@@ -108,7 +100,7 @@ mod tests {
         let local_key = identity::Keypair::generate_ed25519();
         let transport = block_on(libp2p::development_transport(local_key)).unwrap();
         let behaviour = DummyBehaviour::default();
-        let swarm = new(transport, behaviour.clone()).unwrap();
+        let swarm = new(transport, behaviour.clone());
         assert!(
             std::ptr::eq(&behaviour, swarm.behaviour()),
             "The swarm should have the same behavior used to construct it"

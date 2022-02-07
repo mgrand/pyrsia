@@ -35,7 +35,7 @@ impl std::fmt::Display for Status {
                 " (Peer counting ran out of time before it could count all peers)"
             )?;
         }
-        writeln!(f, "")?;
+        writeln!(f)?;
         writeln!(f, "Artifacts Count:             {}", self.artifact_count)?;
         writeln!(f, "Total Disk Space Allocated:  {}", self.disk_allocated)?;
         write!(f, "Disk Space Used:             {}%", self.disk_usage)

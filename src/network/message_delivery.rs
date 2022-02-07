@@ -64,6 +64,7 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
     /// Receive a message associated with the given IT that is already available or wait for it.
     pub fn receive(&self, id: I, timeout_duration: Duration) -> Result<M> {
         debug!("receive(id={:?}", id);
+        #[allow(clippy::mutex_atomic)]
         let arc = Arc::new((Mutex::new(false), Condvar::new()));
         let receiving_envelope = MessageEnvelope {
             arc: Some(arc.clone()),
@@ -105,7 +106,7 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
         let (mutex, cvar) = &*arc;
         let mut guard = match mutex.lock() {
             Ok(guard) => guard,
-            Err(error) => bail!("Error for {:?} unlocking mutex for receive: {}", id,  error),
+            Err(error) => bail!("Error for {:?} unlocking mutex for receive: {}", id, error),
         };
         while !*guard {
             guard = match cvar.wait_timeout(guard, timeout_duration) {
