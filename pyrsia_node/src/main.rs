@@ -33,7 +33,8 @@ use pyrsia::logging::*;
 use pyrsia::network::swarm::{self};
 use pyrsia::network::transport::{new_tokio_tcp_transport, TcpTokioTransport};
 use pyrsia::node_api::routes::make_node_routes;
-use pyrsia::node_api::{LOCAL_KEY, LOCAL_PEER_ID, SWARM_PROXY};
+use pyrsia::node_api::{LOCAL_KEY, LOCAL_PEER_ID, PYRSIA_API_ADDRESS, SWARM_PROXY};
+use pyrsia::node_manager::handlers::{DEFAULT_HOST, DEFAULT_PORT};
 
 use clap::{App, Arg, ArgMatches};
 use futures::StreamExt;
@@ -56,12 +57,9 @@ use tokio::{
 };
 use warp::Filter;
 
-const DEFAULT_HOST: &str = "127.0.0.1";
-const DEFAULT_PORT: &str = "7888";
-
-#[tokio::main]
-async fn main() {
+fn main() {
     pretty_env_logger::init();
+    info!("Pyrsia node starting");
 
     let matches: ArgMatches = process_command_line_arguments();
 
@@ -71,9 +69,6 @@ async fn main() {
         SWARM_PROXY.dial(addr).unwrap();
         info!("Dialed {:?}", to_dial)
     }
-
-    // Read full lines from stdin
-    let mut stdin = io::BufReader::new(io::stdin()).lines();
 
     // Listen on all interfaces and whatever port the OS assigns
     SWARM_PROXY
@@ -88,139 +83,12 @@ async fn main() {
         host, port
     );
 
-    let address = SocketAddr::new(
+    (*PYRSIA_API_ADDRESS.write().unwrap()) = SocketAddr::new(
         IpAddr::V4(host.parse::<Ipv4Addr>().unwrap()),
         port.parse::<u16>().unwrap(),
     );
-
-    let (tx, mut rx) = mpsc::channel(32);
-
-    let mut blobs_need_hash = GetBlobsHandle::new();
-    let b1 = blobs_need_hash.clone();
-    //docker node specific tx
-    let tx1 = tx.clone();
-
-    // We need to have two channels (to seperate the handling)
-    // 1. API to main
-    // 2. main to API
-    let (blocks_get_tx_to_main, mut blocks_get_rx_from_api) = mpsc::channel(32); // Request Channel
-    let (blocks_get_tx_answer_to_api, blocks_get_rx_answers_from_main) = mpsc::channel(32); // Response Channel
-
-    let docker_routes = make_docker_routes(b1, tx1);
-    let routes = docker_routes.or(make_node_routes(
-        blocks_get_tx_to_main.clone(),
-        blocks_get_rx_answers_from_main,
-    ));
-
-    let (addr, server) = warp::serve(
-        routes
-            .and(http::log_headers())
-            .recover(custom_recover)
-            .with(warp::log("pyrsia_registry")),
-    )
-    .bind_ephemeral(address);
-
-    info!(
-        "Pyrsia Docker Node is now running on port {}:{}!",
-        addr.ip(),
-        addr.port()
-    );
-
-    tokio::spawn(server);
-    let tx4 = tx.clone();
-
-    let raw_chain = block_chain::Blockchain::new();
-    let bc = Arc::new(Mutex::new(raw_chain));
-    // Kick it off
-    loop {
-        let evt = {
-            tokio::select! {
-                line = stdin.next_line() => Some(EventType::Input(line.expect("can get line").expect("can read line from stdin"))),
-                message = rx.recv() => Some(EventType::Message(message.expect("message exists"))),
-
-                new_hash = blobs_need_hash.select_next_some() => {
-                    debug!("Looking for {}", new_hash);
-                    swarm.behaviour_mut().lookup_blob(new_hash).await;
-                    None
-                },
-
-                event = swarm.select_next_some() =>  {
-                    !debug!("Received swarm event {:?}", event);
-                    if let SwarmEvent::NewListenAddr { address, .. } = event {
-                        info!("Listening on {:?}", address);
-                    }
-
-                    //SwarmEvent::Behaviour(e) => panic!("Unexpected event: {:?}", e),
-                    None
-                },
-                get_blocks_request_input = blocks_get_rx_from_api.recv() => //BlockChain::handle_api_requests(),
-
-                // Channels are only one type (both tx and rx must match)
-                // We need to have two channel for each API call to send and receive
-                // The request and the response.
-
-                {
-                    info!("Processessing 'GET /blocks' {} request", get_blocks_request_input.unwrap());
-                    let bc1 = bc.clone();
-                    let block_chaing_instance = bc1.lock().await.clone();
-                    blocks_get_tx_answer_to_api.send(block_chaing_instance).await.expect("send to work");
-
-                    None
-                }
-            }
-        };
-
-        if let Some(event) = evt {
-            match event {
-                EventType::Response(resp) => {
-                    //here we have to manage which events to publish to floodsub
-                    swarm
-                        .behaviour_mut()
-                        .floodsub_mut()
-                        .publish(floodsub_topic.clone(), resp.as_bytes());
-                }
-                EventType::Input(line) => match line.as_str() {
-                    "peers" => swarm.behaviour_mut().list_peers_cmd().await,
-                    cmd if cmd.starts_with("magnet:") => {
-                        info!(
-                            "{}",
-                            swarm
-                                .behaviour_mut()
-                                .gossipsub_mut()
-                                .publish(gossip_topic.clone(), cmd)
-                                .unwrap()
-                        )
-                    }
-                    _ => match tx4.send(line).await {
-                        Ok(_) => debug!("line sent"),
-                        Err(_) => error!("failed to send stdin input"),
-                    },
-                },
-                EventType::Message(message) => match message.as_str() {
-                    cmd if cmd.starts_with("peers") || cmd.starts_with("status") => {
-                        swarm.behaviour_mut().list_peers(*LOCAL_PEER_ID).await
-                    }
-                    cmd if cmd.starts_with("get_blobs") => {
-                        swarm.behaviour_mut().lookup_blob(message).await
-                    }
-                    "blocks" => { /*
-                         let bc_state: Arc<_> = bc.clone();
-                         let mut bc_instance: MutexGuard<_> = bc_state.lock().await;
-                         let new_block =
-                             bc_instance.mk_block("happy_new_block".to_string()).unwrap();
-
-                         let new_chain = bc_instance
-                             .clone()
-                             .add_entry(new_block)
-                             .expect("should have added");
-                         *bc_instance = new_chain;
-                         */
-                    }
-                    _ => info!("message received from peers: {}", message),
-                },
-            }
-        }
-    }
+    SWARM_PROXY.start_polling_loop_using_my_thread();
+    info!("Pyrsia node exiting");
 }
 
 fn process_command_line_arguments() -> ArgMatches {
@@ -260,12 +128,6 @@ fn process_command_line_arguments() -> ArgMatches {
                 .help("Provide an explicit peerId to connect with"),
         )
         .get_matches()
-}
-
-enum EventType {
-    Response(String),
-    Message(String),
-    Input(String),
 }
 
 #[cfg(test)]

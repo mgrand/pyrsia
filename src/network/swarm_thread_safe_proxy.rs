@@ -17,18 +17,32 @@ extern crate libp2p;
 extern crate libp2p_kad;
 extern crate std;
 
+use crate::block_chain::block_chain;
+use crate::block_chain::block_chain::Blockchain;
+use crate::node_api::{FLOODSUB_TOPIC, GOSSIP_TOPIC, LOCAL_PEER_ID, PYRSIA_API_ADDRESS, SWARM_PROXY};
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour};
+use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
-use log::{debug, error};
+use log::{debug, error, info};
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::io::Error;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::thread::ThreadId;
+use tokio::io;
+use tokio::io::{AsyncBufReadExt, BufReader, Lines, Stdin};
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::{Receiver, Sender};
+use warp::Filter;
+use crate::docker::error_util::custom_recover;
+use crate::docker::v2::handlers::blobs::GetBlobsHandle;
+use crate::docker::v2::routes::make_docker_routes;
+use crate::logging::http;
+use crate::node_api::routes::make_node_routes;
 
 struct PollingLoopControl {
     polling_loop_thread: Option<ThreadId>,
@@ -182,6 +196,64 @@ fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>)
     }
 }
 
+struct PollingContext {
+    bc: Arc<Mutex<Blockchain>>,
+    stdin: Lines<BufReader<Stdin>>,
+    tx: Sender<String>,
+    rx: Receiver<String>,
+    blobs_need_hash: GetBlobsHandle,
+    blocks_get_rx_from_api: Receiver<String>,
+    blocks_get_tx_answer_to_api: Sender<Blockchain>,
+}
+
+impl PollingContext {
+    fn default() -> PollingContext {
+        let raw_chain = block_chain::Blockchain::new();
+        let bc = Arc::new(Mutex::new(raw_chain));
+
+        // Read full lines from stdin
+        let mut stdin = io::BufReader::new(io::stdin()).lines();
+
+        // TODO Because we have otherwise unrelated things communicating through channels, there is much
+        let (tx, mut rx) = mpsc::channel(32);
+        let mut blobs_need_hash = GetBlobsHandle::new();
+        let b1 = blobs_need_hash.clone();
+        //docker node specific tx
+        let tx1 = tx.clone();
+
+        // We need to have two channels (to seperate the handling)
+        // 1. API to main
+        // 2. main to API
+        let (blocks_get_tx_to_main, mut blocks_get_rx_from_api) = mpsc::channel(32); // Request Channel
+        let (blocks_get_tx_answer_to_api, blocks_get_rx_answers_from_main) = mpsc::channel(32); // Response Channel
+
+        let docker_routes = make_docker_routes(b1, tx1);
+        let routes = docker_routes.or(make_node_routes(
+            blocks_get_tx_to_main.clone(),
+            blocks_get_rx_answers_from_main,
+        ));
+
+        let (addr, server) = warp::serve(
+            routes
+                .and(http::log_headers())
+                .recover(custom_recover)
+                .with(warp::log("pyrsia_registry")),
+        )
+            .bind_ephemeral(PYRSIA_API_ADDRESS.read().unwrap().clone());
+
+        info!(
+        "Pyrsia Docker Node is now running on port {}:{}!",
+        addr.ip(),
+        addr.port()
+    );
+
+        tokio::spawn(server);
+        let tx4 = tx.clone();
+
+        PollingContext { bc, stdin, tx, rx, blobs_need_hash, blocks_get_rx_from_api, blocks_get_tx_answer_to_api }
+    }
+}
+
 fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
     debug!(
         "Running polling loop in thread {:?}",
@@ -194,8 +266,9 @@ fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
             .polling_loop_thread
             .unwrap()
     );
+    let mut polling_context = PollingContext::default();
     while !shutdown_requested(&control) {
-        polling_logic();
+        polling_logic(&mut polling_context);
     }
     cleanup_for_polling_loop_exit(&control);
 }
@@ -210,8 +283,115 @@ fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopC
     );
 }
 
-fn polling_logic() {
-    todo!("the logic for each iteration of the polling loop goes here.")
+fn polling_logic(polling_context: &mut PollingContext) {
+    let evt = {
+        tokio::select! {
+            line = polling_context.stdin.next_line() => Some(EventType::Input(line.expect("can get line").expect("can read line from stdin"))),
+            message = polling_context.rx.recv() => Some(EventType::Message(message.expect("message exists"))),
+
+            new_hash = polling_context.blobs_need_hash.select_next_some() => {
+                debug!("Looking for {}", new_hash);
+                SWARM_PROXY.with_behaviour_mut(new_hash, |arg| {
+                    let (new_hash, behavior) = arg;
+                    behavior.lookup_blob(new_hash).await
+                });
+                None
+            },
+
+            event = SWARM_PROXY.select_next_some() =>  {
+                !debug!("Received swarm event {:?}", event);
+                if let SwarmEvent::NewListenAddr { address, .. } = event {
+                    info!("Listening on {:?}", address);
+                }
+
+                //SwarmEvent::Behaviour(e) => panic!("Unexpected event: {:?}", e),
+                None
+            },
+            get_blocks_request_input = polling_context.blocks_get_rx_from_api.recv() => //BlockChain::handle_api_requests(),
+
+            // Channels are only one type (both tx and rx must match)
+            // We need to have two channel for each API call to send and receive
+            // The request and the response.
+
+            {
+                info!("Processing 'GET /blocks' {} request", get_blocks_request_input.unwrap());
+                let bc1 = polling_context.bc.clone();
+                let block_chaing_instance = bc1.lock().await.clone();
+                polling_context.blocks_get_tx_answer_to_api.send(block_chaing_instance).await.expect("send to work");
+
+                None
+            }
+        }
+    };
+
+    if let Some(event) = evt {
+        match event {
+            EventType::Response(resp) => {
+                //here we have to manage which events to publish to floodsub
+                SWARM_PROXY.with_behaviour_mut(resp, |arg| {
+                    let (resp, behavior) = arg;
+                    behavior
+                        .floodsub_mut()
+                        .publish(*FLOODSUB_TOPIC, resp.as_bytes())
+                });
+            }
+            EventType::Input(line) => match line.as_str() {
+                "peers" => SWARM_PROXY.with_behaviour_mut((), |arg| {
+                    let (behavior) = arg;
+                    behavior.list_peers_cmd().await
+                }),
+                cmd if cmd.starts_with("magnet:") => {
+                    info!(
+                        "{}",
+                        SWARM_PROXY.with_behaviour_mut((), |arg| {
+                            let (behavior) = arg;
+                            behavior
+                                .gossipsub_mut()
+                                .publish(&*GOSSIP_TOPIC, cmd)
+                                .unwrap()
+                        })
+                    )
+                }
+                _ => match polling_context.tx.send(line).await {
+                    Ok(_) => debug!("line sent"),
+                    Err(_) => error!("failed to send stdin input"),
+                },
+            },
+            EventType::Message(message) => match message.as_str() {
+                cmd if cmd.starts_with("peers") || cmd.starts_with("status") => SWARM_PROXY
+                    .with_behaviour_mut((), |arg| {
+                        let (behavior) = arg;
+                        behavior.list_peers(*LOCAL_PEER_ID).await
+                    }),
+                cmd if cmd.starts_with("get_blobs") => {
+                    SWARM_PROXY.with_behaviour_mut(message, |arg| {
+                        let (message, behavior) = arg;
+                        behavior.lookup_blob(message).await
+                    })
+                }
+                "blocks" => { /*
+                     let bc_state: Arc<_> = bc.clone();
+                     let mut bc_instance: MutexGuard<_> = bc_state.lock().await;
+                     let new_block =
+                         bc_instance.mk_block("happy_new_block".to_string()).unwrap();
+
+                     let new_chain = bc_instance
+                         .clone()
+                         .add_entry(new_block)
+                         .expect("should have added");
+                     *bc_instance = new_chain;
+                     */
+                }
+                _ => info!("message received from peers: {}", message),
+            },
+        }
+    }
+}
+
+enum EventType {
+    Response(String),
+    Message(String),
+    Input(String),
 }
 
 #[cfg(test)]

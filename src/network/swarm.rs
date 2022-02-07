@@ -23,7 +23,7 @@ use libp2p::{gossipsub, PeerId};
 use std::collections::hash_map::DefaultHasher;
 
 use crate::network::transport;
-use crate::node_api::LOCAL_KEY;
+use crate::node_api::{GOSSIP_TOPIC, LOCAL_KEY};
 use crate::node_manager::handlers::{FLOODSUB_TOPIC, LOCAL_PEER_ID};
 use futures::executor::block_on;
 use libp2p::core::muxing::StreamMuxerBox;
@@ -59,8 +59,7 @@ pub fn default() -> Swarm<MyBehaviour> {
     .expect("Correct configuration");
 
     // subscribes to our gossip topic
-    let gossip_topic = IdentTopic::new("pyrsia_file_share_topic");
-    gossipsub.subscribe(&gossip_topic).unwrap();
+    gossipsub.subscribe(&*GOSSIP_TOPIC).unwrap();
 
     let kademlia = Kademlia::new(*LOCAL_PEER_ID, MemoryStore::new(*LOCAL_PEER_ID));
     let mdns = match block_on(Mdns::new(Default::default())) {
