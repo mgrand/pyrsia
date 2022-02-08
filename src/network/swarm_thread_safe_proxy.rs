@@ -28,7 +28,7 @@ use futures::StreamExt;
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour};
+use libp2p::swarm::{AddAddressResult, AddressScore, DialError, IntoProtocolsHandler, NetworkBehaviour, ProtocolsHandler, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
 use log::{debug, info};
 
@@ -153,8 +153,23 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         f((value, (*self.ref_cell()).borrow_mut().behaviour_mut()))
     }
 
-    pub fn select_next_some(&self) -> SelectNextSome<'_, Swarm<T>> {
-        (*self.ref_cell()).borrow_mut().select_next_some()
+    pub async fn process_next_event(&self) {
+        let swarm_event = (*self.ref_cell()).borrow_mut().select_next_some().await;
+        debug!("Processing swarm event ");
+        match swarm_event {
+            SwarmEvent::Behaviour(behaviour) => {debug!("SwarmEvent::Behaviour"); },
+            SwarmEvent::ConnectionEstablished { .. } => {}
+            SwarmEvent::ConnectionClosed { .. } => {}
+            SwarmEvent::IncomingConnection { .. } => {}
+            SwarmEvent::IncomingConnectionError { .. } => {}
+            SwarmEvent::OutgoingConnectionError { .. } => {}
+            SwarmEvent::BannedPeer { .. } => {}
+            SwarmEvent::NewListenAddr { .. } => {}
+            SwarmEvent::ExpiredListenAddr { .. } => {}
+            SwarmEvent::ListenerClosed { .. } => {}
+            SwarmEvent::ListenerError { .. } => {}
+            SwarmEvent::Dialing(_) => {}
+        }
     }
 }
 
@@ -172,7 +187,7 @@ fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>)
 async fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
     debug!("Running polling loop");
     while !control.lock().unwrap().borrow().as_ref().unwrap().shutdown_requested {
-        polling_logic().await;
+        SWARM_PROXY.process_next_event().await;
     }
     cleanup_for_polling_loop_exit(&control);
 }
@@ -182,20 +197,6 @@ fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopC
     let cell = guard.borrow_mut();
     let _ = cell.replace(None);
     debug!("Exiting polling loop");
-}
-
-async fn polling_logic() {
-    let event = SWARM_PROXY.select_next_some().await;
-    info!("Processing event {:?}", event);
-    //     event = SWARM_PROXY.select_next_some() =>  {
-    //         debug!("Received swarm event {:?}", event);
-    //         if let SwarmEvent::NewListenAddr { address, .. } = event {
-    //             info!("Listening on {:?}", address);
-    //         }
-    //
-    //         //SwarmEvent::Behaviour(e) => panic!("Unexpected event: {:?}", e),
-    //         None
-    // }
 }
 
 #[cfg(test)]
