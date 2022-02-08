@@ -36,23 +36,14 @@ use std::panic::UnwindSafe;
 use std::str;
 use std::time::Duration;
 use std::{fs, panic};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-use std::sync::RwLock;
-use libp2p_gossipsub::IdentTopic;
+use libp2p::gossipsub::IdentTopic;
 
 pub const ARTIFACTS_DIR: &str = "pyrsia";
 //TODO: read from CLI config file
 pub const ALLOCATED_SPACE_FOR_ARTIFACTS: usize = 10840000;
 
-pub const DEFAULT_HOST: &str = "127.0.0.1";
-pub const DEFAULT_PORT: &str = "7888";
-
 lazy_static! {
-    pub static ref PYRSIA_API_ADDRESS: RwLock<SocketAddr> = RwLock::new(SocketAddr::new(
-        IpAddr::V4( DEFAULT_HOST.parse::<Ipv4Addr>().unwrap()),
-        DEFAULT_PORT.parse::<u16>().unwrap(),
-    ));
     pub static ref MESSAGE_DELIVERY: MessageDelivery<QueryId, QueryResult> =
         MessageDelivery::default();
     pub static ref LOCAL_KEY: identity::Keypair = identity::Keypair::generate_ed25519();

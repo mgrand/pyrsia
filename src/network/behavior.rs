@@ -288,7 +288,8 @@ mod tests {
         });
         // Expect that Kademlia will call inject_event
         MESSAGE_DELIVERY
-            .receive(query_id, Duration::from_secs(2))
+            .receive(query_id)
+            .await
             .expect("the message should be successfully received.");
     }
 }

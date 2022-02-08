@@ -17,7 +17,7 @@
 use super::behavior::MyBehaviour;
 use super::transport::TcpTokioTransport;
 use libp2p::gossipsub::MessageId;
-use libp2p::gossipsub::{GossipsubMessage, IdentTopic, MessageAuthenticity, ValidationMode};
+use libp2p::gossipsub::{GossipsubMessage, MessageAuthenticity, ValidationMode};
 use libp2p::{floodsub::Floodsub, mdns::Mdns, swarm::SwarmBuilder, Swarm};
 use libp2p::{gossipsub, PeerId};
 use std::collections::hash_map::DefaultHasher;
@@ -59,7 +59,8 @@ pub fn default() -> Swarm<MyBehaviour> {
     .expect("Correct configuration");
 
     // subscribes to our gossip topic
-    gossipsub.subscribe(&*GOSSIP_TOPIC).unwrap();
+    let gossip_topic = *GOSSIP_TOPIC;
+    gossipsub.subscribe(&gossip_topic).unwrap();
 
     let kademlia = Kademlia::new(*LOCAL_PEER_ID, MemoryStore::new(*LOCAL_PEER_ID));
     let mdns = match block_on(Mdns::new(Default::default())) {
