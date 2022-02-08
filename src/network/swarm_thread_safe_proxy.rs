@@ -22,30 +22,15 @@ use std::cell::RefCell;
 use std::io::Error;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use crate::node_api::{SWARM_PROXY, TOKIO_RUNTIME};
 use futures::stream::SelectNextSome;
 use futures::StreamExt;
-use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
-use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour, SwarmEvent};
 use libp2p::swarm::dial_opts::DialOpts;
-use log::{debug, error, info};
-use tokio::{io, task};
-use tokio::io::{AsyncBufReadExt, BufReader, Lines, Stdin};
-use tokio::runtime::Runtime;
-use tokio::sync::mpsc;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::task::JoinHandle;
-use warp::Filter;
-
-use crate::block_chain::block_chain;
-use crate::block_chain::block_chain::Blockchain;
-use crate::docker::error_util::custom_recover;
-use crate::docker::v2::handlers::blobs::GetBlobsHandle;
-use crate::docker::v2::routes::make_docker_routes;
-use crate::logging::http;
-use crate::node_api::{FLOODSUB_TOPIC, GOSSIP_TOPIC, LOCAL_PEER_ID, SWARM_PROXY};
-use crate::node_api::routes::make_node_routes;
+use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour};
+use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
+use log::{debug, info};
 
 struct PollingLoopControl {
     shutdown_requested: bool,
@@ -78,25 +63,6 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         self.mutex.is_poisoned()
     }
 
-    /// Run the swarm polling loop using the caller's thread, returning when the polling loop is stopped.
-    /// If another thread is already running the loop, logs an error and returns immediately.
-    ///
-    /// This is intended to be called from the main thread.
-    pub fn start_polling_loop_using_my_thread(&self) {
-        {
-            let mut guard = self
-                .polling_loop_control
-                .lock()
-                .expect("If the mutex is broken, panic");
-            let cell = guard.borrow_mut();
-            if (**cell).get_mut().is_some() {
-                return error!("start_polling_loop_using_my_thread was called while the polling loop was already running");
-            }
-            cell.replace(Some(PollingLoopControl::default()));
-        }
-        run_polling_loop(self.polling_loop_control.clone());
-    }
-
     /// If the swarm polling loop is not running spawn a thread to run it. This always returns immediately.
     ///
     /// This is intended to be called from unit tests.
@@ -109,16 +75,13 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         if (**cell).borrow().is_some() {
             return debug!("start_polling_loop_using_other_thread was called while the polling loop was already running");
         }
-        let control = self.polling_loop_control.clone();
-        let polling_thread_id = task::spawn(move || {
-            run_polling_loop(control);
-        })
-        .thread()
-        .id();
         cell.replace(Some(PollingLoopControl {
-            polling_loop_thread: Some(polling_thread_id),
             shutdown_requested: false,
         }));
+        let control = self.polling_loop_control.clone();
+        TOKIO_RUNTIME.spawn(async {
+            run_polling_loop(control);
+        });
     }
 
     /// Request the polling loop to stop. This sets a flag preventing more polling loop iterations. It does not immediately stop or interrupt anything.
@@ -206,21 +169,10 @@ fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>)
     }
 }
 
-fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
-    debug!(
-        "Running polling loop in thread {:?}",
-        control
-            .lock()
-            .expect("If the mutex is broken, panic")
-            .borrow()
-            .as_ref()
-            .unwrap()
-            .polling_loop_thread
-            .unwrap()
-    );
-    let mut polling_context = PollingContext::default();
-    while !shutdown_requested(&control) {
-        polling_logic(&mut polling_context);
+async fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
+    debug!("Running polling loop");
+    while !control.lock().unwrap().borrow().as_ref().unwrap().shutdown_requested {
+        polling_logic().await;
     }
     cleanup_for_polling_loop_exit(&control);
 }
@@ -228,30 +180,22 @@ fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
 fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
     let mut guard = control.lock().expect("If the mutex is broken, panic");
     let cell = guard.borrow_mut();
-    let old_control = cell.replace(None);
-    debug!(
-        "Thread exited polling loop: {:?}",
-        old_control.as_ref().unwrap().polling_loop_thread.unwrap()
-    );
+    let _ = cell.replace(None);
+    debug!("Exiting polling loop");
 }
 
-fn polling_logic() {
-            event = SWARM_PROXY.select_next_some() =>  {
-                debug!("Received swarm event {:?}", event);
-                if let SwarmEvent::NewListenAddr { address, .. } = event {
-                    info!("Listening on {:?}", address);
-                }
-
-                //SwarmEvent::Behaviour(e) => panic!("Unexpected event: {:?}", e),
-                None
-        }
-
-}
-
-enum EventType {
-    Response(String),
-    Message(String),
-    Input(String),
+async fn polling_logic() {
+    let event = SWARM_PROXY.select_next_some().await;
+    info!("Processing event {:?}", event);
+    //     event = SWARM_PROXY.select_next_some() =>  {
+    //         debug!("Received swarm event {:?}", event);
+    //         if let SwarmEvent::NewListenAddr { address, .. } = event {
+    //             info!("Listening on {:?}", address);
+    //         }
+    //
+    //         //SwarmEvent::Behaviour(e) => panic!("Unexpected event: {:?}", e),
+    //         None
+    // }
 }
 
 #[cfg(test)]

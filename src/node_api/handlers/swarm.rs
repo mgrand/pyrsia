@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::{Receiver, Sender};
 use tokio::sync::Mutex;
+use tokio::time::timeout;
 use warp::{http::StatusCode, Rejection, Reply};
 
 const GET_CLOSEST_PEERS_TIMEOUT_SECONDS: u64 = 2;
@@ -32,14 +33,16 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
     debug!("requesting closest peers");
     let query_id: QueryId = SWARM_PROXY
         .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
-    match MESSAGE_DELIVERY.receive(
-        query_id,
+    match timeout(
         Duration::from_secs(GET_CLOSEST_PEERS_TIMEOUT_SECONDS),
-    ) {
-        Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
+        MESSAGE_DELIVERY.receive(query_id),
+    )
+    .await
+    {
+        Ok(Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
             peers,
             ..
-        }))) => {
+        })))) => {
             info!("Got peers: {:?}", peers);
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "application/json")
@@ -47,9 +50,9 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
                 .body(peers_as_json_string(peers))
                 .unwrap())
         }
-        Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
+        Ok(Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
             GetClosestPeersError::Timeout { peers, .. },
-        ))) => {
+        )))) => {
             warn!("Got some peers but timed out: {:?}", peers);
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "application/json")
@@ -57,7 +60,7 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
                 .body(peers_as_json_string(peers))
                 .unwrap())
         }
-        Ok(other) => {
+        Ok(Ok(other)) => {
             error!(
                 "Expected a QueryResult::GetClosetsPeers, but got {:?}",
                 other
@@ -68,8 +71,16 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
                 .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap())
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             error!("Error getting closest peers response: {}", error);
+            Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
+                .unwrap())
+        },
+        Err(timeout_error) => {
+            error!("Timed out waiting for Kademlia to find peers: {}", timeout_error);
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -97,18 +108,23 @@ pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
     let mut incomplete_peer_count = false;
     let query_id = SWARM_PROXY
         .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
-    let peers_count = match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
-        Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
+    let peers_count = match timeout(
+        *KADEMLIA_RESPONSE_TIMOUT,
+        MESSAGE_DELIVERY.receive(query_id),
+    )
+    .await
+    {
+        Ok(Ok(QueryResult::GetClosestPeers(core::result::Result::Ok(GetClosestPeersOk {
             peers,
             ..
-        }))) => peers.len(),
-        Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
+        })))) => peers.len(),
+        Ok(Ok(QueryResult::GetClosestPeers(core::result::Result::Err(
             GetClosestPeersError::Timeout { peers, .. },
-        ))) => {
+        )))) => {
             incomplete_peer_count = true;
             peers.len()
         }
-        Ok(other) => {
+        Ok(Ok(other)) => {
             error!(
                 "Expected a QueryResult::GetClosetsPeers, but got {:?}",
                 other
@@ -119,8 +135,16 @@ pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
                 .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap());
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             error!("Error getting closest peers response: {}", error);
+            return Ok(warp::http::response::Builder::new()
+                .header("Content-Type", "text")
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
+                .unwrap());
+        },
+        Err(timeout) => {
+            error!("Timed out waiting for Kademlia peers to be found: {}", timeout);
             return Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)

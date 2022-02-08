@@ -277,10 +277,9 @@ pub fn get_peers(mdns: &mut Mdns) -> Result<String, Error> {
 mod tests {
     use super::*;
     use crate::node_api::{LOCAL_PEER_ID, SWARM_PROXY};
-    use std::time::Duration;
 
-    #[test]
-    pub fn inject_kademlia_event() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn inject_kademlia_event() {
         // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
         let query_id = SWARM_PROXY.with_behaviour_mut((), |b| {
             b.1.kademlia()

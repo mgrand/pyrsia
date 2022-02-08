@@ -59,8 +59,7 @@ pub fn default() -> Swarm<MyBehaviour> {
     .expect("Correct configuration");
 
     // subscribes to our gossip topic
-    let gossip_topic = *GOSSIP_TOPIC;
-    gossipsub.subscribe(&gossip_topic).unwrap();
+    gossipsub.subscribe(&*GOSSIP_TOPIC).unwrap();
 
     let kademlia = Kademlia::new(*LOCAL_PEER_ID, MemoryStore::new(*LOCAL_PEER_ID));
     let mdns = match block_on(Mdns::new(Default::default())) {

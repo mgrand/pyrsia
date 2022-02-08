@@ -17,7 +17,7 @@
 extern crate lava_torrent;
 extern crate walkdir;
 
-use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY};
+use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY, TOKIO_RUNTIME};
 use crate::node_manager::handlers::LOCAL_PEER_ID;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use fs_extra::dir::get_size;
@@ -33,15 +33,16 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::ffi::{OsStr, OsString};
 use std::fmt::{Display, Formatter};
+use std::fs;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::{BufWriter, Read, Write};
 use std::path;
 use std::path::Path;
 use std::str::FromStr;
-use std::{fs, thread};
 use strum::IntoEnumIterator;
 use strum_macros::{EnumIter, EnumString};
+use tokio::time::timeout;
 use walkdir::{DirEntry, WalkDir};
 
 ///
@@ -427,8 +428,8 @@ impl ArtifactManager {
                 Ok(query_id) => {
                     info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path.display());
                     let torrent_path2 = torrent_path.to_path_buf();
-                    thread::spawn(move || {
-                        match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
+                    TOKIO_RUNTIME.block_on(async {
+                        match timeout(*KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY.receive(query_id)).await {
                             Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path2.display(), query_result),
                             Err(error) => error!("Failed to receive response for adding torent to DHT: {}", error)
                         }
@@ -773,6 +774,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use stringreader::StringReader;
+    use tokio::time::timeout;
 
     pub use super::*;
 
@@ -852,8 +854,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    pub fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
         let mut string_reader = StringReader::new(TEST_ARTIFACT_DATA);
         let hash = Hash::new(HashAlgorithm::SHA256, &TEST_ARTIFACT_HASH)?;
         let dir_name = create_tmp_dir("tmpP")?;
@@ -879,7 +881,7 @@ mod tests {
         let torrent = read_torrent_from_file(&torrent_path);
         check_torrent(&mut path_buf, &torrent);
 
-        find_torrent_in_dht(&am, &torrent_path)?;
+        find_torrent_in_dht(&am, &torrent_path).await?;
 
         // Currently the space_used method does not include the size of directories in the directory tree, so this is how we obtain an independent result to check it.
         let size_of_files_in_directory_tree =
@@ -905,7 +907,7 @@ mod tests {
         Ok(())
     }
 
-    fn find_torrent_in_dht(am: &ArtifactManager, path: &Path) -> Result<()> {
+    async fn find_torrent_in_dht(am: &ArtifactManager, path: &Path) -> Result<()> {
         let multihash: Multihash = am.path_to_hash(path)?.to_multihash()?;
         let key = Key::new(&multihash.to_bytes());
         let file_torrent = read_torrent_from_file(path);
@@ -915,7 +917,12 @@ mod tests {
             let (key, behaviour) = arg;
             behaviour.kademlia().get_record(key, Quorum::One)
         });
-        match MESSAGE_DELIVERY.receive(query_id, *KADEMLIA_RESPONSE_TIMOUT) {
+        match timeout(
+            *KADEMLIA_RESPONSE_TIMOUT,
+            MESSAGE_DELIVERY.receive(query_id),
+        )
+        .await?
+        {
             Ok(QueryResult::GetRecord(core::result::Result::Ok(GetRecordOk {
                 records, ..
             }))) => {
