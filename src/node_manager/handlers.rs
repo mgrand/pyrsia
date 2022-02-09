@@ -222,7 +222,7 @@ mod tests {
         create_artifact(am).context("Error creating artifact")?;
 
         let usage_pct_after = disk_usage(name).context("Error from disk_usage")?;
-        assert_eq!("0.000047", format!("{:.6}", usage_pct_after));
+        assert!(usage_pct_before < usage_pct_after);
 
         Ok(())
     }
@@ -275,11 +275,6 @@ mod tests {
 
     #[test]
     pub fn message_delivery_is_initialized() {
-        info!("Message_delivery: {:?}", *MESSAGE_DELIVERY)
-    }
-
-    #[test]
-    pub fn finish() {
-        panic!("!")
+        info!("Message_delivery is statically initialized otherwise this would blow up: {:?}", *MESSAGE_DELIVERY)
     }
 }

@@ -56,7 +56,8 @@ mod tests {
             disk_usage: 0.34f64,
         };
         let formatted = format!("{}", status);
-        assert_eq!("***THis is a Placeholder for the correct string", formatted);
+        assert_eq!("Connected Peers Count:       2 (Peer counting ran out of time before it could count all peers)\nArtifacts Count:             4\nTotal Disk Space Allocated:  1000000\nDisk Space Used:             0.34%",
+                   formatted);
         Ok(())
     }
 }
