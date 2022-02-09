@@ -126,7 +126,7 @@ async fn main() {
             .recover(custom_recover)
             .with(warp::log("pyrsia_registry")),
     )
-        .bind_ephemeral(address);
+    .bind_ephemeral(address);
 
     info!(
         "Pyrsia Docker Node is now running on port {}:{}!",

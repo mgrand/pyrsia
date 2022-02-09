@@ -64,6 +64,7 @@ default-features = false
 features = []
 
 [dev-dependencies]
+traitobject = "0.1.0"
 string_manipulation = {path="tests/string_manipulation"}
 
 expectest = "0.10.0"

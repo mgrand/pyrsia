@@ -24,8 +24,8 @@ use log::debug;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::hash::Hash;
-use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
+use std::sync::{Arc, Mutex};
+use tokio::sync::Notify;
 
 const INITIAL_MAP_CAPACITY: usize = 23;
 
@@ -50,14 +50,13 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
     }
 
     /// Make a message available for delivery to the thread that is or will be waiting for a message associated with the given id
-    pub async fn deliver(&self, id: I, message: M) {
+    pub fn deliver(&self, id: I, message: M) {
         debug!("deliver(id={:?}, message={:?}", id, message);
         let delivery_envelope = MessageEnvelope {
             notify: None,
             message: Some(message),
         };
-        let mut lock = self.id_message_map.lock().await;
-        if let Some(receive_envelope) = lock.insert(id, delivery_envelope) {
+        if let Some(receive_envelope) = self.insert_into_map(id, delivery_envelope) {
             receive_envelope.notify.expect("When we get an message envelope from receive, it is supposed to have Some(Notify).").notify_one();
         }
     }
@@ -70,12 +69,12 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
             notify: Some(notify.clone()),
             message: None,
         };
-        let mut lock = self.id_message_map.lock().await;
-        match lock.insert(id.clone(), receive_envelope) {
+        let insert_result = self.insert_into_map(id.clone(), receive_envelope);
+        match insert_result {
             Some(MessageEnvelope {
                 message: Some(msg), ..
             }) => {
-                lock.remove(&id);
+                self.remove_from_map(&id);
                 Ok(msg)
             }
             Some(MessageEnvelope { message: None, .. }) => {
@@ -83,7 +82,7 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
             }
             None => {
                 notify.notified().await;
-                match lock.remove(&id) {
+                match self.remove_from_map(&id) {
                     Some(MessageEnvelope {
                         message: Some(msg), ..
                     }) => Ok(msg),
@@ -94,6 +93,20 @@ impl<I: Eq + Hash + Clone + Debug, M: Debug> MessageDelivery<I, M> {
                 }
             }
         }
+    }
+
+    fn remove_from_map(&self, id: &I) -> Option<MessageEnvelope<M>> {
+        self.id_message_map
+            .lock()
+            .expect("The mutex is not broken by a previous panic")
+            .remove(&id)
+    }
+
+    fn insert_into_map(&self, id: I, envelope: MessageEnvelope<M>) -> Option<MessageEnvelope<M>> {
+        self.id_message_map
+            .lock()
+            .expect("The mutex is not broken by a previous panic")
+            .insert(id, envelope)
     }
 }
 
@@ -107,7 +120,6 @@ struct MessageEnvelope<M: Debug> {
 mod tests {
     use super::*;
     use log::info;
-    use std::thread;
     use std::time::Duration;
 
     #[derive(Debug)]
@@ -120,7 +132,7 @@ mod tests {
     async fn deliver_then_receive() -> Result<()> {
         let message_delivery: MessageDelivery<u32, FakeTestEvent> = MessageDelivery::default();
         let id = 37;
-        message_delivery.deliver(id, FakeTestEvent::Start).await;
+        message_delivery.deliver(id, FakeTestEvent::Start);
         let actual_message = message_delivery.receive(id).await?;
         match actual_message {
             FakeTestEvent::Start => Ok(()),
@@ -134,10 +146,10 @@ mod tests {
     async fn receive_before_deliver() -> Result<()> {
         let arc: Arc<MessageDelivery<i32, FakeTestEvent>> = Arc::new(MessageDelivery::default());
         let arc2 = arc.clone();
-        thread::spawn(move || {
+        tokio::spawn(async move {
             info!("receive_before_deliver: Waiting for receipt attempt to begin. Delivery will be after");
             let message_delivery = &*arc2;
-            tokio::time::sleep(Duration::from_millis(3));
+            tokio::time::sleep(Duration::from_millis(3)).await;
             info!("receive_before_deliver: delivering");
             message_delivery.deliver(RECEIVE_BEFORE_DELIVER_ID, FakeTestEvent::Stop);
         });

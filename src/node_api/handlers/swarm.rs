@@ -32,7 +32,8 @@ const GET_CLOSEST_PEERS_TIMEOUT_SECONDS: u64 = 2;
 pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
     debug!("requesting closest peers");
     let query_id: QueryId = SWARM_PROXY
-        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
+        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID))
+        .await;
     match timeout(
         Duration::from_secs(GET_CLOSEST_PEERS_TIMEOUT_SECONDS),
         MESSAGE_DELIVERY.receive(query_id),
@@ -78,9 +79,12 @@ pub async fn handle_get_peers() -> Result<impl Reply, Rejection> {
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap())
-        },
+        }
         Err(timeout_error) => {
-            error!("Timed out waiting for Kademlia to find peers: {}", timeout_error);
+            error!(
+                "Timed out waiting for Kademlia to find peers: {}",
+                timeout_error
+            );
             Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -107,7 +111,8 @@ fn peers_as_json_string(peers: Vec<PeerId>) -> String {
 pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
     let mut incomplete_peer_count = false;
     let query_id = SWARM_PROXY
-        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID));
+        .with_behaviour_mut((), |arg| arg.1.kademlia().get_closest_peers(*LOCAL_PEER_ID))
+        .await;
     let peers_count = match timeout(
         *KADEMLIA_RESPONSE_TIMOUT,
         MESSAGE_DELIVERY.receive(query_id),
@@ -142,9 +147,12 @@ pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(StatusCode::INTERNAL_SERVER_ERROR.as_str().to_string())
                 .unwrap());
-        },
+        }
         Err(timeout) => {
-            error!("Timed out waiting for Kademlia peers to be found: {}", timeout);
+            error!(
+                "Timed out waiting for Kademlia peers to be found: {}",
+                timeout
+            );
             return Ok(warp::http::response::Builder::new()
                 .header("Content-Type", "text")
                 .status(StatusCode::INTERNAL_SERVER_ERROR)

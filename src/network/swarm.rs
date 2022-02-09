@@ -99,10 +99,9 @@ mod tests {
         let local_key = identity::Keypair::generate_ed25519();
         let transport = block_on(libp2p::development_transport(local_key)).unwrap();
         let behaviour = DummyBehaviour::default();
-        let swarm = new(transport, behaviour.clone());
-        assert!(
-            std::ptr::eq(&behaviour, swarm.behaviour()),
-            "The swarm should have the same behavior used to construct it"
-        );
+
+        let swarm = new(transport, behaviour);
+        swarm.behaviour();
+        // nothing more to test other than it doesn't blow up.
     }
 }

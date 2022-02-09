@@ -18,19 +18,18 @@ extern crate libp2p_kad;
 extern crate std;
 
 use std::borrow::BorrowMut;
-use std::cell::RefCell;
 use std::io::Error;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
 
 use crate::node_api::{SWARM_PROXY, TOKIO_RUNTIME};
-use futures::stream::SelectNextSome;
 use futures::StreamExt;
 use libp2p::core::connection::ListenerId;
 use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
-use libp2p::swarm::{AddAddressResult, AddressScore, DialError, IntoProtocolsHandler, NetworkBehaviour, ProtocolsHandler, SwarmEvent};
+use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
-use log::{debug, info};
+use log::{debug, warn};
+use tokio::sync::Mutex;
 
 struct PollingLoopControl {
     shutdown_requested: bool,
@@ -46,120 +45,136 @@ impl PollingLoopControl {
 
 /// A thread safe proxy to insure that only one thread at a time is making a call to the swarm. It uses internal mutability so that the caller of this struct's methods can use an immutable reference.
 pub struct SwarmThreadSafeProxy<T: NetworkBehaviour> {
-    mutex: Mutex<RefCell<Swarm<T>>>,
-    polling_loop_control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>,
+    mutex: Mutex<Swarm<T>>,
+    polling_loop_control: Arc<Mutex<Option<PollingLoopControl>>>,
 }
 
 impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     pub fn new(swarm: Swarm<T>) -> SwarmThreadSafeProxy<T> {
         SwarmThreadSafeProxy {
-            mutex: Mutex::new(RefCell::new(swarm)),
-            polling_loop_control: Arc::new(Mutex::new(RefCell::new(None))),
+            mutex: Mutex::new(swarm),
+            polling_loop_control: Arc::new(Mutex::new(None)),
         }
-    }
-
-    /// return true if the mutex is in a poisoned state due to a previous panic.
-    pub fn is_poisoned(&self) -> bool {
-        self.mutex.is_poisoned()
     }
 
     /// If the swarm polling loop is not running spawn a thread to run it. This always returns immediately.
     ///
     /// This is intended to be called from unit tests.
-    pub fn start_polling_loop_using_other_thread(&self) {
-        let mut guard = self
-            .polling_loop_control
-            .lock()
-            .expect("If the mutex is broken, panic");
-        let cell = guard.borrow_mut();
-        if (**cell).borrow().is_some() {
-            return debug!("start_polling_loop_using_other_thread was called while the polling loop was already running");
+    pub async fn start_polling_loop_using_other_thread(&self) {
+        if self.create_polling_context().await {
+            let control = self.polling_loop_control.clone();
+            TOKIO_RUNTIME.spawn(async {
+                run_polling_loop(control).await;
+            });
         }
-        cell.replace(Some(PollingLoopControl {
-            shutdown_requested: false,
-        }));
-        let control = self.polling_loop_control.clone();
-        TOKIO_RUNTIME.spawn(async {
-            run_polling_loop(control);
-        });
     }
 
+    async fn create_polling_context(&self) -> bool {
+        let mut lock = self.polling_loop_control.lock().await;
+        if (*lock).is_some() {
+            debug!("start_polling_loop_using_other_thread was called while the polling loop was already running");
+            false
+        } else {
+            *lock = Some(PollingLoopControl::default());
+            true
+        }
+    }
+
+    #[cfg(test)] // Currently used only to support testing
+    async fn is_polling_loop_running(&self) -> bool {
+        let lock = self.polling_loop_control.lock().await;
+        let result = (*lock).is_some();
+        result
+    }
+
+    #[cfg(test)] // Currently used only to support testing
     /// Request the polling loop to stop. This sets a flag preventing more polling loop iterations. It does not immediately stop or interrupt anything.
-    pub fn stop_polling_loop(&self) {
-        let mut guard = self
-            .polling_loop_control
-            .lock()
-            .expect("If the mutex is broken, panic");
-        let mut control = guard.borrow_mut().get_mut().as_mut().unwrap();
-        control.shutdown_requested = true;
+    pub async fn request_polling_loop_shutdown(&self) {
+        let mut guard = self.polling_loop_control.lock().await;
+        let control_option = guard.borrow_mut();
+        if control_option.is_some() {
+            control_option.as_mut().unwrap().shutdown_requested = true;
+        } else {
+            warn!("request_polling_loop_shutdown called when polling loop is not running")
+        }
     }
 
-    fn ref_cell(&self) -> MutexGuard<RefCell<Swarm<T>>> {
-        self.mutex
-            .lock()
-            .expect("SwarmThreadSafeProxy called after a panic during a previous call!")
+    pub async fn network_info(&self) -> NetworkInfo {
+        self.mutex.lock().await.network_info()
     }
 
-    pub fn network_info(&self) -> NetworkInfo {
-        (*self.ref_cell()).borrow().network_info()
+    pub async fn listen_on(&self, address: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
+        self.mutex.lock().await.listen_on(address)
     }
 
-    pub fn listen_on(&self, address: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
-        (*self.ref_cell()).borrow_mut().listen_on(address)
+    pub async fn remove_listener(&self, id: ListenerId) -> bool {
+        self.mutex.lock().await.remove_listener(id)
     }
 
-    pub fn remove_listener(&self, id: ListenerId) -> bool {
-        (*self.ref_cell()).borrow_mut().remove_listener(id)
+    pub async fn dial(&self, opts: impl Into<DialOpts>) -> Result<(), DialError> {
+        self.mutex.lock().await.dial(opts)
     }
 
-    pub fn dial(&self, opts: impl Into<DialOpts>) -> Result<(), DialError> {
-        (*self.ref_cell()).borrow_mut().dial(opts)
+    pub async fn local_peer_id(&self) -> PeerId {
+        *(*self.mutex.lock().await).local_peer_id()
     }
 
-    pub fn local_peer_id(&self) -> PeerId {
-        *(*self.ref_cell()).borrow().local_peer_id()
+    pub async fn add_external_addresses(&self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
+        (*self.mutex.lock().await)
+            .borrow_mut()
+            .add_external_address(a, s)
     }
 
-    pub fn add_external_addresses(&self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
-        (*self.ref_cell()).borrow_mut().add_external_address(a, s)
+    pub async fn remove_external_addresses(&self, a: &Multiaddr) -> bool {
+        (*self.mutex.lock().await)
+            .borrow_mut()
+            .remove_external_address(a)
     }
 
-    pub fn remove_external_addresses(&self, a: &Multiaddr) -> bool {
-        (*self.ref_cell()).borrow_mut().remove_external_address(a)
+    pub async fn ban_peer_id(&self, peer_id: PeerId) {
+        (*self.mutex.lock().await).borrow_mut().ban_peer_id(peer_id)
     }
 
-    pub fn ban_peer_id(&self, peer_id: PeerId) {
-        (*self.ref_cell()).borrow_mut().ban_peer_id(peer_id)
-    }
-
-    pub fn unban_peer_id(&self, peer_id: PeerId) {
-        (*self.ref_cell()).borrow_mut().unban_peer_id(peer_id)
+    pub async fn unban_peer_id(&self, peer_id: PeerId) {
+        (*self.mutex.lock().await)
+            .borrow_mut()
+            .unban_peer_id(peer_id)
     }
 
     #[allow(clippy::result_unit_err)] // A result that returns a unit error is a requirement inherited from the underlying method.
-    pub fn disconnect_peer_id(&self, peer_id: PeerId) -> Result<(), ()> {
-        (*self.ref_cell()).borrow_mut().disconnect_peer_id(peer_id)
+    pub async fn disconnect_peer_id(&self, peer_id: PeerId) -> Result<(), ()> {
+        (*self.mutex.lock().await)
+            .borrow_mut()
+            .disconnect_peer_id(peer_id)
     }
 
-    pub fn is_connected(&self, peer_id: &PeerId) -> bool {
-        (*self.ref_cell()).borrow().is_connected(peer_id)
+    pub async fn is_connected(&self, peer_id: &PeerId) -> bool {
+        self.mutex.lock().await.is_connected(peer_id)
     }
 
-    pub fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
-        f((value, (*self.ref_cell()).borrow().behaviour()))
+    pub async fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
+        f((value, self.mutex.lock().await.behaviour()))
     }
 
-    pub fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
-        f((value, (*self.ref_cell()).borrow_mut().behaviour_mut()))
+    pub async fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
+        f((
+            value,
+            (*self.mutex.lock().await).borrow_mut().behaviour_mut(),
+        ))
     }
 
     pub async fn process_next_event(&self) {
-        let swarm_event = (*self.ref_cell()).borrow_mut().select_next_some().await;
+        let swarm_event = (*self.mutex.lock().await)
+            .borrow_mut()
+            .select_next_some()
+            .await;
         debug!("Processing swarm event ");
         match swarm_event {
-            SwarmEvent::Behaviour(behaviour) => {debug!("SwarmEvent::Behaviour"); },
+            SwarmEvent::Behaviour(_behaviour) => {
+                debug!("SwarmEvent::Behaviour");
+            }
             SwarmEvent::ConnectionEstablished { .. } => {}
-            SwarmEvent::ConnectionClosed { .. } => {}
+            SwarmEvent::ConnectionClosed { .. } => {warn!("connection closed")}
             SwarmEvent::IncomingConnection { .. } => {}
             SwarmEvent::IncomingConnectionError { .. } => {}
             SwarmEvent::OutgoingConnectionError { .. } => {}
@@ -173,29 +188,23 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     }
 }
 
-/// Return true if there is a pending request to shut down the polling loop.
-fn shutdown_requested(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) -> bool {
-    match *(control.lock().expect("mutex is OK").borrow()) {
-        Some(PollingLoopControl {
-            shutdown_requested: flag,
-            ..
-        }) => flag,
-        None => true,
-    }
-}
-
-async fn run_polling_loop(control: Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
+async fn run_polling_loop(control: Arc<Mutex<Option<PollingLoopControl>>>) {
     debug!("Running polling loop");
-    while !control.lock().unwrap().borrow().as_ref().unwrap().shutdown_requested {
+    while !control
+        .lock()
+        .await
+        .as_ref()
+        .unwrap()
+        .shutdown_requested
+    {
         SWARM_PROXY.process_next_event().await;
     }
-    cleanup_for_polling_loop_exit(&control);
+    cleanup_for_polling_loop_exit(&control).await;
 }
 
-fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<RefCell<Option<PollingLoopControl>>>>) {
-    let mut guard = control.lock().expect("If the mutex is broken, panic");
-    let cell = guard.borrow_mut();
-    let _ = cell.replace(None);
+async fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<Option<PollingLoopControl>>>) {
+    let mut lock = control.lock().await;
+    *lock = None;
     debug!("Exiting polling loop");
 }
 
@@ -204,6 +213,7 @@ mod tests {
     use futures::executor::block_on;
     use libp2p::identity;
     use libp2p::swarm::DummyBehaviour;
+    use std::time::Duration;
 
     use super::*;
 
@@ -216,9 +226,14 @@ mod tests {
         SwarmThreadSafeProxy::new(swarm)
     }
 
-    #[test]
-    pub fn new_proxy_test() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn start_and_stop_polling_loop() {
         let proxy = swarm_proxy_for_test();
-        assert!(!proxy.is_poisoned())
+        assert!(!proxy.is_polling_loop_running().await);
+        proxy.start_polling_loop_using_other_thread().await;
+        assert!(proxy.is_polling_loop_running().await);
+        proxy.request_polling_loop_shutdown().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!proxy.is_polling_loop_running().await);
     }
 }

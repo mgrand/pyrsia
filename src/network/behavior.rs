@@ -281,10 +281,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn inject_kademlia_event() {
         // Kademlia won't let us create a QueryId, so we cannot create our own events. We have to ask Kademlia to create an event.
-        let query_id = SWARM_PROXY.with_behaviour_mut((), |b| {
-            b.1.kademlia()
-                .get_record(&Key::new(&LOCAL_PEER_ID.to_bytes()), Quorum::One)
-        });
+        let query_id = SWARM_PROXY
+            .with_behaviour_mut((), |b| {
+                b.1.kademlia()
+                    .get_record(&Key::new(&LOCAL_PEER_ID.to_bytes()), Quorum::One)
+            })
+            .await;
         // Expect that Kademlia will call inject_event
         MESSAGE_DELIVERY
             .receive(query_id)

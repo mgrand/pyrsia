@@ -3135,6 +3135,7 @@ dependencies = [
  "test-log",
  "thiserror",
  "tokio",
+ "traitobject",
  "tungstenite",
  "unqlite",
  "url 1.7.2",
@@ -4160,6 +4161,12 @@ checksum = "1f4ed65637b8390770814083d20756f87bfa2c21bf2f110babdc5438351746e4"
 dependencies = [
  "lazy_static",
 ]
+
+[[package]]
+name = "traitobject"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "efd1f82c56340fdf16f2a953d7bda4f8fdffba13d93b00844c25572110b26079"
 
 [[package]]
 name = "trust-dns-proto"

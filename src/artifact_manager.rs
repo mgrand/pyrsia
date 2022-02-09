@@ -419,28 +419,27 @@ impl ArtifactManager {
             })
         }
 
-        fn put_record_in_dht(torrent_path: &Path, dht_record: Record) -> Result<()> {
-            // TODO We should look at configuring a numeric quorum size.
-            match SWARM_PROXY.with_behaviour_mut(dht_record,|arg|{
-                let (dht_record, behaviour) = arg;
-                behaviour.kademlia().put_record(dht_record, Quorum::Majority)
-            }) {
-                Ok(query_id) => {
-                    info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path.display());
-                    let torrent_path2 = torrent_path.to_path_buf();
-                    TOKIO_RUNTIME.block_on(async {
-                        match timeout(*KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY.receive(query_id)).await {
-                            Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path2.display(), query_result),
-                            Err(error) => error!("Failed to receive response for adding torent to DHT: {}", error)
-                        }
-                    });
-                    Ok(())
-                }
-                Err(error) => bail!(
-                    "Error putting a record in the Kademlia DHT to advertise torrent: {:?}\nTorrent path is {}",
-                    error, torrent_path.display()
-                )
-            }
+        fn put_record_in_dht(torrent_path: &Path, dht_record: Record) {
+            let torrent_path2 = torrent_path.to_path_buf();
+            TOKIO_RUNTIME.spawn(async move {
+                // TODO We should look at configuring a numeric quorum size.
+                match SWARM_PROXY.with_behaviour_mut(dht_record,|arg|{
+                    let (dht_record, behaviour) = arg;
+                    behaviour.kademlia().put_record(dht_record, Quorum::Majority)
+                }).await {
+                    Ok(query_id) => {
+                        info!("QueryId {:?} to add torrent to dht: {}", query_id, torrent_path2.display());
+                            match timeout(*KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY.receive(query_id)).await {
+                                Ok(query_result) => info!("Addition of Torrent to DHT completed: {}\nResult was {:?}", torrent_path2.display(), query_result),
+                                Err(error) => error!("Failed to receive response for adding torent to DHT: {}", error)
+                            }
+                    }
+                    Err(error) => error!(
+                        "Error putting a record in the Kademlia DHT to advertise torrent: {:?}\nTorrent path is {}",
+                        error, torrent_path2.display()
+                    )
+                };
+            });
         }
 
         debug!("Adding torrent to dht: {}", torrent_path.display());
@@ -452,7 +451,8 @@ impl ArtifactManager {
                 torrent_path.display()
             )
         })?;
-        put_record_in_dht(torrent_path, dht_record)
+        put_record_in_dht(torrent_path, dht_record);
+        Ok(())
     }
 
     fn path_to_hash(&self, torrent_path: &Path) -> Result<Hash> {
@@ -913,10 +913,12 @@ mod tests {
         let file_torrent = read_torrent_from_file(path);
 
         // get torrent from DHT
-        let query_id = SWARM_PROXY.with_behaviour_mut(&key, |arg| {
-            let (key, behaviour) = arg;
-            behaviour.kademlia().get_record(key, Quorum::One)
-        });
+        let query_id = SWARM_PROXY
+            .with_behaviour_mut(&key, |arg| {
+                let (key, behaviour) = arg;
+                behaviour.kademlia().get_record(key, Quorum::One)
+            })
+            .await;
         match timeout(
             *KADEMLIA_RESPONSE_TIMOUT,
             MESSAGE_DELIVERY.receive(query_id),
