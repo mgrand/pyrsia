@@ -28,7 +28,7 @@ use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
-use log::{debug, warn};
+use log::{debug, info, trace, warn};
 use tokio::sync::Mutex;
 
 struct PollingLoopControl {
@@ -76,6 +76,7 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
             false
         } else {
             *lock = Some(PollingLoopControl::default());
+            info!("Polling loop started.");
             true
         }
     }
@@ -100,70 +101,110 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     }
 
     pub async fn network_info(&self) -> NetworkInfo {
-        self.mutex.lock().await.network_info()
+        trace!("network_info: entering");
+        let result = self.mutex.lock().await.network_info();
+        trace!("network_info: exiting");
+        result
     }
 
     pub async fn listen_on(&self, address: Multiaddr) -> Result<ListenerId, TransportError<Error>> {
-        self.mutex.lock().await.listen_on(address)
+        trace!("listen_on: entering");
+        let result = self.mutex.lock().await.listen_on(address);
+        trace!("listen_on: exiting");
+        result
     }
 
     pub async fn remove_listener(&self, id: ListenerId) -> bool {
-        self.mutex.lock().await.remove_listener(id)
+        trace!("remove_listener: entering");
+        let result = self.mutex.lock().await.remove_listener(id);
+        trace!("remove_listener: exiting");
+        result
     }
 
     pub async fn dial(&self, opts: impl Into<DialOpts>) -> Result<(), DialError> {
-        self.mutex.lock().await.dial(opts)
+        trace!("dial: entering");
+        let result = self.mutex.lock().await.dial(opts);
+        trace!("dial: exiting");
+        result
     }
 
     pub async fn local_peer_id(&self) -> PeerId {
-        *(*self.mutex.lock().await).local_peer_id()
+        trace!("local_peer_id: entering");
+        let result = *(*self.mutex.lock().await).local_peer_id();
+        trace!("local_peer_id: exiting");
+        result
     }
 
     pub async fn add_external_addresses(&self, a: Multiaddr, s: AddressScore) -> AddAddressResult {
-        (*self.mutex.lock().await)
+        trace!("add_external_addresses: entering");
+        let result = (*self.mutex.lock().await)
             .borrow_mut()
-            .add_external_address(a, s)
+            .add_external_address(a, s);
+        trace!("add_external_addresses: exiting");
+        result
     }
 
     pub async fn remove_external_addresses(&self, a: &Multiaddr) -> bool {
-        (*self.mutex.lock().await)
+        trace!("remove_external_addresses: entering");
+        let result = (*self.mutex.lock().await)
             .borrow_mut()
-            .remove_external_address(a)
+            .remove_external_address(a);
+        trace!("remove_external_addresses: exiting");
+        result
     }
 
     pub async fn ban_peer_id(&self, peer_id: PeerId) {
-        (*self.mutex.lock().await).borrow_mut().ban_peer_id(peer_id)
+        trace!("ban_peer_id: entering");
+        let result = (*self.mutex.lock().await).borrow_mut().ban_peer_id(peer_id);
+        trace!("ban_peer_id: exiting");
+        result
     }
 
     pub async fn unban_peer_id(&self, peer_id: PeerId) {
-        (*self.mutex.lock().await)
+        trace!("unban_peer_id: entering");
+        let result = (*self.mutex.lock().await)
             .borrow_mut()
-            .unban_peer_id(peer_id)
+            .unban_peer_id(peer_id);
+        trace!("unban_peer_id: exiting");
+        result
     }
 
     #[allow(clippy::result_unit_err)] // A result that returns a unit error is a requirement inherited from the underlying method.
     pub async fn disconnect_peer_id(&self, peer_id: PeerId) -> Result<(), ()> {
-        (*self.mutex.lock().await)
+        trace!("disconnect_peer_id: entering");
+        let result = (*self.mutex.lock().await)
             .borrow_mut()
-            .disconnect_peer_id(peer_id)
+            .disconnect_peer_id(peer_id);
+        trace!("disconnect_peer_id: exiting");
+        result
     }
 
     pub async fn is_connected(&self, peer_id: &PeerId) -> bool {
-        self.mutex.lock().await.is_connected(peer_id)
+        trace!("is_connected: entering");
+        let result = self.mutex.lock().await.is_connected(peer_id);
+        trace!("is_connected: exiting");
+        result
     }
 
     pub async fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
-        f((value, self.mutex.lock().await.behaviour()))
+        trace!("with_behaviour: entering");
+        let result = f((value, self.mutex.lock().await.behaviour()));
+        trace!("with_behaviour: exiting");
+        result
     }
 
     pub async fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
-        f((
+        trace!("with_behaviour_mut: entering");
+        let result = f((
             value,
             (*self.mutex.lock().await).borrow_mut().behaviour_mut(),
-        ))
+        ));
+        trace!("with_behaviour_mut: exiting");
+        result
     }
 
     pub async fn process_next_event(&self) {
+        debug!("waiting for next SwarmEvent");
         let swarm_event = (*self.mutex.lock().await)
             .borrow_mut()
             .select_next_some()
@@ -174,7 +215,9 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
                 debug!("SwarmEvent::Behaviour");
             }
             SwarmEvent::ConnectionEstablished { .. } => {}
-            SwarmEvent::ConnectionClosed { .. } => {warn!("connection closed")}
+            SwarmEvent::ConnectionClosed { .. } => {
+                warn!("connection closed")
+            }
             SwarmEvent::IncomingConnection { .. } => {}
             SwarmEvent::IncomingConnectionError { .. } => {}
             SwarmEvent::OutgoingConnectionError { .. } => {}
@@ -190,13 +233,7 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
 
 async fn run_polling_loop(control: Arc<Mutex<Option<PollingLoopControl>>>) {
     debug!("Running polling loop");
-    while !control
-        .lock()
-        .await
-        .as_ref()
-        .unwrap()
-        .shutdown_requested
-    {
+    while !control.lock().await.as_ref().unwrap().shutdown_requested {
         SWARM_PROXY.process_next_event().await;
         tokio::task::yield_now().await;
     }
@@ -206,7 +243,7 @@ async fn run_polling_loop(control: Arc<Mutex<Option<PollingLoopControl>>>) {
 async fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<Option<PollingLoopControl>>>) {
     let mut lock = control.lock().await;
     *lock = None;
-    debug!("Exiting polling loop");
+    info!("Exiting polling loop");
 }
 
 #[cfg(test)]
@@ -233,8 +270,70 @@ mod tests {
         assert!(!proxy.is_polling_loop_running().await);
         proxy.start_polling_loop_using_other_thread().await;
         assert!(proxy.is_polling_loop_running().await);
+
+        // Verify that we can access behavior when the polling loop is running
+        let mut success = false;
+        let success_ptr = &mut success;
+        proxy.with_behaviour(success_ptr, |arg| {
+            let (success_ptr, _behaviour) = arg;
+            *success_ptr = true;
+        }).await;
+        assert!(success, "success should be true if with_behaviour called its function arg");
+
+
+        // shut down the polling loop
         proxy.request_polling_loop_shutdown().await;
         tokio::time::sleep(Duration::from_millis(10)).await;
         assert!(!proxy.is_polling_loop_running().await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn start_and_stop_shared_polling_loop() {
+        let proxy = &*SWARM_PROXY;
+        assert!(!proxy.is_polling_loop_running().await);
+        proxy.start_polling_loop_using_other_thread().await;
+        assert!(proxy.is_polling_loop_running().await);
+
+        // Verify that we can access behavior when the polling loop is running
+        let mut success = false;
+        let success_ptr = &mut success;
+        proxy.with_behaviour(success_ptr, |arg| {
+            let (success_ptr, _behaviour) = arg;
+            *success_ptr = true;
+        }).await;
+        assert!(success, "success should be true if with_behaviour called its function arg");
+
+
+        // shut down the polling loop
+        proxy.request_polling_loop_shutdown().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(!proxy.is_polling_loop_running().await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn with_behaviour_test() {
+        let proxy = swarm_proxy_for_test();
+        let mut success = false;
+        let success_ptr = &mut success;
+        proxy.with_behaviour(success_ptr, |arg| {
+            let (success_ptr, _behaviour) = arg;
+            *success_ptr = true;
+        }).await;
+        assert!(success, "success should be true if with_behaviour called its function arg");
+
+        let mut success = false;
+        let success_ptr = &mut success;
+        proxy.with_behaviour_mut(success_ptr, |arg| {
+            let (success_ptr, _behaviour) = arg;
+            *success_ptr = true;
+        }).await;
+        assert!(success, "success should be true if with_behaviour_mut called its function arg");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn local_peer_id_test() {
+        let proxy = swarm_proxy_for_test();
+        let peer_id = proxy.local_peer_id().await;
+        info!("peer_id: {}", peer_id.to_base58());
     }
 }
