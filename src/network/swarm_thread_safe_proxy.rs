@@ -330,10 +330,15 @@ mod tests {
         assert!(success, "success should be true if with_behaviour_mut called its function arg");
     }
 
+    const MH_IDENTITY: u8 = 0x00u8; // Code indicating an identity hash in a multihash
+    const PEER_HASH_LENGTH: u8 = 0x24; // length of a peer ID
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
     async fn local_peer_id_test() {
         let proxy = swarm_proxy_for_test();
         let peer_id = proxy.local_peer_id().await;
-        info!("peer_id: {}", peer_id.to_base58());
+        let peer_bytes = peer_id.to_bytes();
+        assert_eq!(MH_IDENTITY, peer_bytes[0], "Type of hash for peer from DummyBehavior");
+        assert_eq!(PEER_HASH_LENGTH, peer_bytes[1], "Expected length of peer id from DummyBehavior")
     }
 }
