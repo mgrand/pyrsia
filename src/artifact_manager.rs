@@ -26,7 +26,7 @@ use lava_torrent::torrent;
 use lava_torrent::torrent::v1::Torrent;
 use libp2p::kad;
 use libp2p_kad::{Quorum, Record};
-use log::{debug, error, info, warn}; //log_enabled, Level,
+use log::{debug, error, info, trace, warn}; //log_enabled, Level,
 use multihash::{Multihash, MultihashGeneric};
 use path::PathBuf;
 use serde::{Deserialize, Serialize};
@@ -421,7 +421,9 @@ impl ArtifactManager {
 
         fn put_record_in_dht(torrent_path: &Path, dht_record: Record) {
             let torrent_path2 = torrent_path.to_path_buf();
+            trace!("Spawning task to insert torrent in dht");
             TOKIO_RUNTIME.spawn(async move {
+                trace!("starting task to insert torrent in dht");
                 // TODO We should look at configuring a numeric quorum size.
                 match SWARM_PROXY.with_behaviour_mut(dht_record,|arg|{
                     let (dht_record, behaviour) = arg;
@@ -439,6 +441,7 @@ impl ArtifactManager {
                         error, torrent_path2.display()
                     )
                 };
+                trace!("Finished task to insert torrent in dht");
             });
         }
 
@@ -797,20 +800,15 @@ mod tests {
                 ))
             })
             .level(log::LevelFilter::Debug)
+            .level_for("pyrsia::artifact_manager", log::LevelFilter::Trace)
+            .level_for("libp2p_gossipsub::behaviour", log::LevelFilter::Info)
+            .level_for("pyrsia::network::swarm_thread_safe_proxy", log::LevelFilter::Trace)
             .chain(std::io::stdout())
             .apply()
         {
             Ok(_) => info!("Logging initialized"),
             Err(error) => warn!("Initialization of fern logger failed: {}", error),
         }
-
-        ///// This was for using the env_logger
-        // let _ignore = env_logger::builder()
-        //     .is_test(true)
-        //     .target(Target::Stdout)
-        //     .filter(None, LevelFilter::Debug)
-        //     .try_init();
-        // info!("Logging initialized")
     }
 
     #[test]
@@ -884,9 +882,9 @@ mod tests {
     #[test]
     fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
         debug!("starting push_artifact_then_pull_it");
-        // TOKIO_RUNTIME.block_on(async {
-        //     SWARM_PROXY.start_polling_loop_using_other_thread().await;
-        // });
+        TOKIO_RUNTIME.block_on(async {
+            SWARM_PROXY.start_polling_loop_using_other_thread().await;
+        });
         debug!("started polling loop");
         let mut string_reader = StringReader::new(TEST_ARTIFACT_DATA);
         let hash = Hash::new(HashAlgorithm::SHA256, &TEST_ARTIFACT_HASH)?;
@@ -913,9 +911,9 @@ mod tests {
         let torrent = read_torrent_from_file(&torrent_path);
         check_torrent(&mut path_buf, &torrent);
 
-        // TOKIO_RUNTIME.block_on(async {
-        //     find_torrent_in_dht(&am, &torrent_path).await
-        // })?;
+        TOKIO_RUNTIME.block_on(async {
+            find_torrent_in_dht(&am, &torrent_path).await
+        })?;
 
         // Currently the space_used method does not include the size of directories in the directory tree, so this is how we obtain an independent result to check it.
         let size_of_files_in_directory_tree =
@@ -945,11 +943,13 @@ mod tests {
         let multihash: Multihash = am.path_to_hash(path)?.to_multihash()?;
         let key = Key::new(&multihash.to_bytes());
         let file_torrent = read_torrent_from_file(path);
+        info!("looking for torrent in dht");
 
         // get torrent from DHT
         let query_id = SWARM_PROXY
             .with_behaviour_mut(&key, |arg| {
                 let (key, behaviour) = arg;
+                trace!("Calling kademlia.get_record to find torrent");
                 let query_id = behaviour.kademlia().get_record(key, Quorum::One);
                 debug!("Searching for torrent with {:?}", query_id);
                 query_id
