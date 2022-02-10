@@ -55,7 +55,7 @@ lazy_static! {
     pub static ref LOCAL_PEER_ID: PeerId = PeerId::from(LOCAL_KEY.public());
     pub static ref FLOODSUB_TOPIC: Topic = Topic::new("pyrsia_node_conversation");
     pub static ref GOSSIP_TOPIC: IdentTopic = IdentTopic::new("pyrsia_file_share_topic");
-    pub static ref KADEMLIA_RESPONSE_TIMOUT: Duration = Duration::from_secs(2);
+    pub static ref KADEMLIA_RESPONSE_TIMOUT: Duration = Duration::from_secs(5);
     pub static ref SWARM_PROXY: SwarmThreadSafeProxy<MyBehaviour> =
         SwarmThreadSafeProxy::new(network::swarm::default());
     pub static ref ART_MGR: ArtifactManager = {
