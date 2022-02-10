@@ -198,6 +198,7 @@ async fn run_polling_loop(control: Arc<Mutex<Option<PollingLoopControl>>>) {
         .shutdown_requested
     {
         SWARM_PROXY.process_next_event().await;
+        tokio::task::yield_now().await;
     }
     cleanup_for_polling_loop_exit(&control).await;
 }

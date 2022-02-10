@@ -762,10 +762,9 @@ fn is_accessible_directory(repository_path: &Path) -> bool {
 mod tests {
     use crate::artifact_manager::{ArtifactManager, Hash, HashAlgorithm};
     use anyhow::{anyhow, Context};
-    use env_logger::Target;
     use libp2p_kad::record::Key;
     use libp2p_kad::{GetRecordOk, QueryResult};
-    use log::{info, LevelFilter};
+    use log::info;
     use num_traits::cast::AsPrimitive;
     use rand::{Rng, RngCore};
     use std::env;
@@ -774,17 +773,44 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
     use stringreader::StringReader;
+    use time::format_description;
     use tokio::time::timeout;
 
     pub use super::*;
 
     #[ctor::ctor]
     fn init() {
-        let _ignore = env_logger::builder()
-            .is_test(true)
-            .target(Target::Stdout)
-            .filter(None, LevelFilter::Debug)
-            .try_init();
+        // Initialize fern logger
+        let timestamp_format = format_description::parse(
+            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]Z",
+        ).expect("logging timestamp format is valid");
+        match fern::Dispatch::new()
+            .format(move |out, message, record| {
+                out.finish(format_args!(
+                    "{}[{}][{}] {}",
+                    time::OffsetDateTime::now_utc()
+                        .format(&timestamp_format)
+                        .unwrap_or_else(|_| "*** Time Formatting Error ***".to_string()),
+                    record.target(),
+                    record.level(),
+                    message
+                ))
+            })
+            .level(log::LevelFilter::Debug)
+            .chain(std::io::stdout())
+            .apply()
+        {
+            Ok(_) => info!("Logging initialized"),
+            Err(error) => warn!("Initialization of fern logger failed: {}", error),
+        }
+
+        ///// This was for using the env_logger
+        // let _ignore = env_logger::builder()
+        //     .is_test(true)
+        //     .target(Target::Stdout)
+        //     .filter(None, LevelFilter::Debug)
+        //     .try_init();
+        // info!("Logging initialized")
     }
 
     #[test]
@@ -854,8 +880,14 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
+    //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[test]
+    fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
+        debug!("starting push_artifact_then_pull_it");
+        // TOKIO_RUNTIME.block_on(async {
+        //     SWARM_PROXY.start_polling_loop_using_other_thread().await;
+        // });
+        debug!("started polling loop");
         let mut string_reader = StringReader::new(TEST_ARTIFACT_DATA);
         let hash = Hash::new(HashAlgorithm::SHA256, &TEST_ARTIFACT_HASH)?;
         let dir_name = create_tmp_dir("tmpP")?;
@@ -881,7 +913,9 @@ mod tests {
         let torrent = read_torrent_from_file(&torrent_path);
         check_torrent(&mut path_buf, &torrent);
 
-        find_torrent_in_dht(&am, &torrent_path).await?;
+        // TOKIO_RUNTIME.block_on(async {
+        //     find_torrent_in_dht(&am, &torrent_path).await
+        // })?;
 
         // Currently the space_used method does not include the size of directories in the directory tree, so this is how we obtain an independent result to check it.
         let size_of_files_in_directory_tree =
@@ -916,7 +950,9 @@ mod tests {
         let query_id = SWARM_PROXY
             .with_behaviour_mut(&key, |arg| {
                 let (key, behaviour) = arg;
-                behaviour.kademlia().get_record(key, Quorum::One)
+                let query_id = behaviour.kademlia().get_record(key, Quorum::One);
+                debug!("Searching for torrent with {:?}", query_id);
+                query_id
             })
             .await;
         match timeout(
@@ -973,9 +1009,11 @@ mod tests {
         let mut reader = am
             .pull_artifact(&hash)
             .context("Error from pull_artifact")?;
+        debug!("pull_artifact returned, checking content");
         let mut read_buffer = String::new();
         reader.read_to_string(&mut read_buffer)?;
         assert_eq!(TEST_ARTIFACT_DATA, read_buffer);
+        debug!("pull of artifact succeeded");
         Ok(())
     }
 

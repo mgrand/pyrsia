@@ -64,6 +64,8 @@ default-features = false
 features = []
 
 [dev-dependencies]
+fern = "0.6.0"
+time = { version = "0.3.6", features = ["formatting", "parsing"] }
 traitobject = "0.1.0"
 string_manipulation = {path="tests/string_manipulation"}
 
