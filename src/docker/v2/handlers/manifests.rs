@@ -317,7 +317,7 @@ fn get_artifact_manifest(artifacts: &[Artifact]) -> Option<&Artifact> {
 fn store_manifest_in_artifact_manager(bytes: Bytes) -> anyhow::Result<(HashAlgorithm, Vec<u8>)> {
     let manifest_vec = bytes.to_vec();
     let sha512: Vec<u8> = raw_sha512(manifest_vec).to_vec();
-    put_artifact(&sha512, Box::new(bytes.reader()), HashAlgorithm::SHA512)?;
+    put_artifact(&sha512, Box::new(bytes.reader()))?;
     Ok((HashAlgorithm::SHA512, sha512))
 }
 

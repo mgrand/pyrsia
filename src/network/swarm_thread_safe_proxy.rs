@@ -186,22 +186,22 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
         result
     }
 
-    // pub async fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
-    //     trace!("with_behaviour: entering");
-    //     let result = f((value, self.mutex.lock().await.behaviour()));
-    //     trace!("with_behaviour: exiting");
-    //     result
-    // }
-    //
-    // pub async fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
-    //     trace!("with_behaviour_mut: entering");
-    //     let result = f((
-    //         value,
-    //         (*self.mutex.lock().await).borrow_mut().behaviour_mut(),
-    //     ));
-    //     trace!("with_behaviour_mut: exiting");
-    //     result
-    // }
+    pub async fn with_behaviour<U, V>(&self, value: V, f: fn((V, &T)) -> U) -> U {
+        trace!("with_behaviour: entering");
+        let result = f((value, self.mutex.lock().await.behaviour()));
+        trace!("with_behaviour: exiting");
+        result
+    }
+
+    pub async fn with_behaviour_mut<U, V>(&self, value: V, f: fn((V, &mut T)) -> U) -> U {
+        trace!("with_behaviour_mut: entering");
+        let result = f((
+            value,
+            (*self.mutex.lock().await).borrow_mut().behaviour_mut(),
+        ));
+        trace!("with_behaviour_mut: exiting");
+        result
+    }
 
     async fn process_next_event(&self) {
         debug!("waiting for next SwarmEvent");

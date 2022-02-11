@@ -15,15 +15,11 @@
 */
 
 use super::{RegistryError, RegistryErrorCode};
-use crate::block_chain::block_chain::Blockchain;
 use crate::node_manager::{handlers::*, model::cli::Status};
 use libp2p::PeerId;
 use libp2p_kad::{GetClosestPeersError, GetClosestPeersOk, QueryId, QueryResult};
 use log::{debug, error, info, warn};
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc::{Receiver, Sender};
-use tokio::sync::Mutex;
 use tokio::time::timeout;
 use warp::{http::StatusCode, Rejection, Reply};
 
@@ -189,29 +185,5 @@ pub async fn handle_get_status() -> Result<impl Reply, Rejection> {
         .header("Content-Type", "application/json")
         .status(StatusCode::OK)
         .body(ser_status)
-        .unwrap())
-}
-
-// TODO Move to block chain module
-pub async fn handle_get_blocks(
-    tx: Sender<String>,
-    rx: Arc<Mutex<Receiver<Blockchain>>>,
-) -> Result<impl Reply, Rejection> {
-    // Send "digested" request data to main
-    match tx.send(String::from("blocks")).await {
-        Ok(_) => debug!("request for peers sent"),
-        Err(_) => error!("failed to send stdin input"),
-    }
-
-    // get result from main ( where the block chain lives )
-    let block_chain = rx.lock().await.recv().await.unwrap();
-    let blocks = format!("{}", block_chain);
-    info!("Got receive_blocks: {}", blocks);
-
-    // format the response
-    Ok(warp::http::response::Builder::new()
-        .header("Content-Type", "application/json")
-        .status(StatusCode::OK)
-        .body(blocks)
         .unwrap())
 }
