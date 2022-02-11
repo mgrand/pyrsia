@@ -17,7 +17,8 @@
 use super::handlers::swarm::*;
 use warp::Filter;
 
-pub fn make_node_routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+pub fn make_node_routes() -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone
+{
     let peers = warp::path!("peers")
         .and(warp::get())
         .and(warp::path::end())
@@ -27,7 +28,6 @@ pub fn make_node_routes() -> impl Filter<Extract = impl warp::Reply, Error = war
         .and(warp::get())
         .and(warp::path::end())
         .and_then(handle_get_status);
-
 
     warp::any().and(peers.or(status))
 }

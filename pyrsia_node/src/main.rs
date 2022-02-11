@@ -86,7 +86,7 @@ async fn main() {
         host, port
     );
 
-    SWARM_PROXY.start_polling_loop_using_other_thread();
+    SWARM_PROXY.start_event_loop_using_other_thread();
 
     // Get host and port from the settings. Defaults to DEFAULT_HOST and DEFAULT_PORT
     let host = matches.value_of("host").unwrap();
@@ -115,10 +115,7 @@ async fn main() {
     let (blocks_get_tx_answer_to_api, blocks_get_rx_answers_from_main) = mpsc::channel(32); // Response Channel
 
     let docker_routes = make_docker_routes(b1, tx1);
-    let routes = docker_routes.or(make_node_routes(
-        blocks_get_tx_to_main.clone(),
-        blocks_get_rx_answers_from_main,
-    ));
+    let routes = docker_routes.or(make_node_routes());
 
     let (addr, server) = warp::serve(
         routes

@@ -275,6 +275,9 @@ mod tests {
 
     #[test]
     pub fn message_delivery_is_initialized() {
-        info!("Message_delivery is statically initialized otherwise this would blow up: {:?}", *MESSAGE_DELIVERY)
+        info!(
+            "Message_delivery is statically initialized otherwise this would blow up: {:?}",
+            *MESSAGE_DELIVERY
+        )
     }
 }

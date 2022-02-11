@@ -17,7 +17,9 @@
 extern crate lava_torrent;
 extern crate walkdir;
 
-use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY, TOKIO_RUNTIME, LOCAL_PEER_ID};
+use crate::node_api::{
+    KADEMLIA_RESPONSE_TIMOUT, LOCAL_PEER_ID, MESSAGE_DELIVERY, SWARM_PROXY, TOKIO_RUNTIME,
+};
 use anyhow::{anyhow, bail, Context, Error, Result};
 use fs_extra::dir::get_size;
 use lava_torrent::bencode::BencodeElem;
@@ -783,9 +785,9 @@ mod tests {
     #[ctor::ctor]
     fn init() {
         // Initialize fern logger
-        let timestamp_format = format_description::parse(
-            "[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]Z",
-        ).expect("logging timestamp format is valid");
+        let timestamp_format =
+            format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second].[subsecond]Z")
+                .expect("logging timestamp format is valid");
         match fern::Dispatch::new()
             .format(move |out, message, record| {
                 out.finish(format_args!(
@@ -801,7 +803,10 @@ mod tests {
             .level(log::LevelFilter::Debug)
             .level_for("pyrsia::artifact_manager", log::LevelFilter::Trace)
             .level_for("libp2p_gossipsub::behaviour", log::LevelFilter::Info)
-            .level_for("pyrsia::network::swarm_thread_safe_proxy", log::LevelFilter::Trace)
+            .level_for(
+                "pyrsia::network::swarm_thread_safe_proxy",
+                log::LevelFilter::Trace,
+            )
             .chain(std::io::stdout())
             .apply()
         {
@@ -882,7 +887,7 @@ mod tests {
     fn push_artifact_then_pull_it() -> Result<(), anyhow::Error> {
         debug!("starting push_artifact_then_pull_it");
         TOKIO_RUNTIME.block_on(async {
-            SWARM_PROXY.start_polling_loop_using_other_thread().await;
+            SWARM_PROXY.start_event_loop_using_other_thread().await;
         });
         debug!("started polling loop");
         let mut string_reader = StringReader::new(TEST_ARTIFACT_DATA);
@@ -910,9 +915,7 @@ mod tests {
         let torrent = read_torrent_from_file(&torrent_path);
         check_torrent(&mut path_buf, &torrent);
 
-        TOKIO_RUNTIME.block_on(async {
-            find_torrent_in_dht(&am, &torrent_path).await
-        })?;
+        TOKIO_RUNTIME.block_on(async { find_torrent_in_dht(&am, &torrent_path).await })?;
 
         // Currently the space_used method does not include the size of directories in the directory tree, so this is how we obtain an independent result to check it.
         let size_of_files_in_directory_tree =

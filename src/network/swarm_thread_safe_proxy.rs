@@ -19,8 +19,10 @@ extern crate std;
 
 use std::borrow::BorrowMut;
 use std::io::Error;
+use std::sync::atomic::{AtomicU16, AtomicU32};
 use std::sync::Arc;
 
+use crate::network::message_delivery::MessageDelivery;
 use crate::node_api::{SWARM_PROXY, TOKIO_RUNTIME};
 use futures::StreamExt;
 use libp2p::core::connection::ListenerId;
@@ -28,16 +30,18 @@ use libp2p::core::network::NetworkInfo;
 use libp2p::swarm::dial_opts::DialOpts;
 use libp2p::swarm::{AddAddressResult, AddressScore, DialError, NetworkBehaviour, SwarmEvent};
 use libp2p::{Multiaddr, PeerId, Swarm, TransportError};
+use libp2p_kad::{QueryId, Quorum, Record};
 use log::{debug, info, trace, warn};
+use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::Mutex;
 
-struct PollingLoopControl {
+struct EventLoopControl {
     shutdown_requested: bool,
 }
 
-impl PollingLoopControl {
-    fn default() -> PollingLoopControl {
-        PollingLoopControl {
+impl EventLoopControl {
+    fn default() -> EventLoopControl {
+        EventLoopControl {
             shutdown_requested: false,
         }
     }
@@ -46,57 +50,69 @@ impl PollingLoopControl {
 /// A thread safe proxy to insure that only one thread at a time is making a call to the swarm. It uses internal mutability so that the caller of this struct's methods can use an immutable reference.
 pub struct SwarmThreadSafeProxy<T: NetworkBehaviour> {
     mutex: Mutex<Swarm<T>>,
-    polling_loop_control: Arc<Mutex<Option<PollingLoopControl>>>,
+    event_loop_control: Arc<Mutex<Option<EventLoopControl>>>,
+    kademlia_sequence_number: AtomicU32,
+    kademlia_query_id_delivery: MessageDelivery<u32, QueryId>,
+    kademlia_request_sender: Sender<KademliaRequest>,
+    kademlia_request_receiver: Receiver<KademliaRequest>,
 }
+
+const KADEMLIA_REQUEST_CHANNEL_CAPACITY: usize = 100;
 
 impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     pub fn new(swarm: Swarm<T>) -> SwarmThreadSafeProxy<T> {
+        let (kademlia_request_sender, kademlia_request_receiver) =
+            channel(KADEMLIA_REQUEST_CHANNEL_CAPACITY);
         SwarmThreadSafeProxy {
             mutex: Mutex::new(swarm),
-            polling_loop_control: Arc::new(Mutex::new(None)),
+            event_loop_control: Arc::new(Mutex::new(None)),
+            kademlia_sequence_number: AtomicU32::new(0),
+            kademlia_query_id_delivery: MessageDelivery::default(),
+            kademlia_request_sender,
+            kademlia_request_receiver,
         }
     }
 
-    /// If the swarm polling loop is not running spawn a thread to run it. This always returns immediately.
+    /// If the swarm event loop is not running spawn a thread to run it. This always returns immediately.
     ///
     /// This is intended to be called from unit tests.
-    pub async fn start_polling_loop_using_other_thread(&self) {
-        if self.create_polling_context().await {
-            let control = self.polling_loop_control.clone();
+    pub async fn start_event_loop_using_other_thread(&self) {
+        if self.create_event_context().await {
+            let control = self.event_loop_control.clone();
             TOKIO_RUNTIME.spawn(async {
-                run_polling_loop(control).await;
+                run_event_loop(control).await;
             });
         }
     }
 
-    async fn create_polling_context(&self) -> bool {
-        let mut lock = self.polling_loop_control.lock().await;
+    async fn create_event_context(&self) -> bool {
+        let mut lock = self.event_loop_control.lock().await;
         if (*lock).is_some() {
-            debug!("start_polling_loop_using_other_thread was called while the polling loop was already running");
+            debug!("start_event_loop_using_other_thread was called while the event loop was already running");
             false
         } else {
-            *lock = Some(PollingLoopControl::default());
-            info!("Polling loop started.");
+            *lock = Some(EventLoopControl::default());
+            info!("Event loop started.");
             true
         }
     }
 
     #[cfg(test)] // Currently used only to support testing
-    async fn is_polling_loop_running(&self) -> bool {
-        let lock = self.polling_loop_control.lock().await;
+    async fn is_event_loop_running(&self) -> bool {
+        let lock = self.event_loop_control.lock().await;
         let result = (*lock).is_some();
         result
     }
 
     #[cfg(test)] // Currently used only to support testing
-    /// Request the polling loop to stop. This sets a flag preventing more polling loop iterations. It does not immediately stop or interrupt anything.
-    pub async fn request_polling_loop_shutdown(&self) {
-        let mut guard = self.polling_loop_control.lock().await;
+    /// Request the event loop to stop. This sets a flag preventing more event loop iterations. It does not immediately stop or interrupt anything.
+    pub async fn request_event_loop_shutdown(&self) {
+        let mut guard = self.event_loop_control.lock().await;
         let control_option = guard.borrow_mut();
         if control_option.is_some() {
             control_option.as_mut().unwrap().shutdown_requested = true;
         } else {
-            warn!("request_polling_loop_shutdown called when polling loop is not running")
+            warn!("request_event_loop_shutdown called when event loop is not running")
         }
     }
 
@@ -231,19 +247,32 @@ impl<T: NetworkBehaviour> SwarmThreadSafeProxy<T> {
     }
 }
 
-async fn run_polling_loop(control: Arc<Mutex<Option<PollingLoopControl>>>) {
-    debug!("Running polling loop");
+async fn run_event_loop(control: Arc<Mutex<Option<EventLoopControl>>>) {
+    debug!("Running event loop");
     while !control.lock().await.as_ref().unwrap().shutdown_requested {
         SWARM_PROXY.process_next_event().await;
         tokio::task::yield_now().await;
     }
-    cleanup_for_polling_loop_exit(&control).await;
+    cleanup_for_event_loop_exit(&control).await;
 }
 
-async fn cleanup_for_polling_loop_exit(control: &Arc<Mutex<Option<PollingLoopControl>>>) {
+async fn cleanup_for_event_loop_exit(control: &Arc<Mutex<Option<EventLoopControl>>>) {
     let mut lock = control.lock().await;
     *lock = None;
-    info!("Exiting polling loop");
+    info!("Exiting event loop");
+}
+
+enum KademliaRequest {
+    GetClosestPeers(libp2p_kad::kbucket::Key<PeerId>),
+    GetClosestLocalPeers(libp2p_kad::kbucket::Key<PeerId>),
+    GetRecord {
+        key: libp2p_kad::record::Key,
+        quorum: Quorum,
+    },
+    PutRecord {
+        record: Record,
+        quorum: Quorum,
+    },
 }
 
 #[cfg(test)]
@@ -265,49 +294,57 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn start_and_stop_polling_loop() {
+    async fn start_and_stop_event_loop() {
         let proxy = swarm_proxy_for_test();
-        assert!(!proxy.is_polling_loop_running().await);
-        proxy.start_polling_loop_using_other_thread().await;
-        assert!(proxy.is_polling_loop_running().await);
+        assert!(!proxy.is_event_loop_running().await);
+        proxy.start_event_loop_using_other_thread().await;
+        assert!(proxy.is_event_loop_running().await);
 
-        // Verify that we can access behavior when the polling loop is running
+        // Verify that we can access behavior when the event loop is running
         let mut success = false;
         let success_ptr = &mut success;
-        proxy.with_behaviour(success_ptr, |arg| {
-            let (success_ptr, _behaviour) = arg;
-            *success_ptr = true;
-        }).await;
-        assert!(success, "success should be true if with_behaviour called its function arg");
+        proxy
+            .with_behaviour(success_ptr, |arg| {
+                let (success_ptr, _behaviour) = arg;
+                *success_ptr = true;
+            })
+            .await;
+        assert!(
+            success,
+            "success should be true if with_behaviour called its function arg"
+        );
 
-
-        // shut down the polling loop
-        proxy.request_polling_loop_shutdown().await;
+        // shut down the event loop
+        proxy.request_event_loop_shutdown().await;
         tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(!proxy.is_polling_loop_running().await);
+        assert!(!proxy.is_event_loop_running().await);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
-    async fn start_and_stop_shared_polling_loop() {
+    async fn start_and_stop_shared_event_loop() {
         let proxy = &*SWARM_PROXY;
-        assert!(!proxy.is_polling_loop_running().await);
-        proxy.start_polling_loop_using_other_thread().await;
-        assert!(proxy.is_polling_loop_running().await);
+        assert!(!proxy.is_event_loop_running().await);
+        proxy.start_event_loop_using_other_thread().await;
+        assert!(proxy.is_event_loop_running().await);
 
-        // Verify that we can access behavior when the polling loop is running
+        // Verify that we can access behavior when the event loop is running
         let mut success = false;
         let success_ptr = &mut success;
-        proxy.with_behaviour(success_ptr, |arg| {
-            let (success_ptr, _behaviour) = arg;
-            *success_ptr = true;
-        }).await;
-        assert!(success, "success should be true if with_behaviour called its function arg");
+        proxy
+            .with_behaviour(success_ptr, |arg| {
+                let (success_ptr, _behaviour) = arg;
+                *success_ptr = true;
+            })
+            .await;
+        assert!(
+            success,
+            "success should be true if with_behaviour called its function arg"
+        );
 
-
-        // shut down the polling loop
-        proxy.request_polling_loop_shutdown().await;
+        // shut down the event loop
+        proxy.request_event_loop_shutdown().await;
         tokio::time::sleep(Duration::from_millis(10)).await;
-        assert!(!proxy.is_polling_loop_running().await);
+        assert!(!proxy.is_event_loop_running().await);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
@@ -315,19 +352,29 @@ mod tests {
         let proxy = swarm_proxy_for_test();
         let mut success = false;
         let success_ptr = &mut success;
-        proxy.with_behaviour(success_ptr, |arg| {
-            let (success_ptr, _behaviour) = arg;
-            *success_ptr = true;
-        }).await;
-        assert!(success, "success should be true if with_behaviour called its function arg");
+        proxy
+            .with_behaviour(success_ptr, |arg| {
+                let (success_ptr, _behaviour) = arg;
+                *success_ptr = true;
+            })
+            .await;
+        assert!(
+            success,
+            "success should be true if with_behaviour called its function arg"
+        );
 
         let mut success = false;
         let success_ptr = &mut success;
-        proxy.with_behaviour_mut(success_ptr, |arg| {
-            let (success_ptr, _behaviour) = arg;
-            *success_ptr = true;
-        }).await;
-        assert!(success, "success should be true if with_behaviour_mut called its function arg");
+        proxy
+            .with_behaviour_mut(success_ptr, |arg| {
+                let (success_ptr, _behaviour) = arg;
+                *success_ptr = true;
+            })
+            .await;
+        assert!(
+            success,
+            "success should be true if with_behaviour_mut called its function arg"
+        );
     }
 
     const MH_IDENTITY: u8 = 0x00u8; // Code indicating an identity hash in a multihash
@@ -338,7 +385,13 @@ mod tests {
         let proxy = swarm_proxy_for_test();
         let peer_id = proxy.local_peer_id().await;
         let peer_bytes = peer_id.to_bytes();
-        assert_eq!(MH_IDENTITY, peer_bytes[0], "Type of hash for peer from DummyBehavior");
-        assert_eq!(PEER_HASH_LENGTH, peer_bytes[1], "Expected length of peer id from DummyBehavior")
+        assert_eq!(
+            MH_IDENTITY, peer_bytes[0],
+            "Type of hash for peer from DummyBehavior"
+        );
+        assert_eq!(
+            PEER_HASH_LENGTH, peer_bytes[1],
+            "Expected length of peer id from DummyBehavior"
+        )
     }
 }
