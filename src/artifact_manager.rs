@@ -17,8 +17,7 @@
 extern crate lava_torrent;
 extern crate walkdir;
 
-use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY, TOKIO_RUNTIME};
-use crate::node_manager::handlers::LOCAL_PEER_ID;
+use crate::node_api::{KADEMLIA_RESPONSE_TIMOUT, MESSAGE_DELIVERY, SWARM_PROXY, TOKIO_RUNTIME, LOCAL_PEER_ID;
 use anyhow::{anyhow, bail, Context, Error, Result};
 use fs_extra::dir::get_size;
 use lava_torrent::bencode::BencodeElem;
